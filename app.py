@@ -1,22 +1,18 @@
 """
-Backend funcional - Agente de monitoramento do Diario Oficial da Uniao (DOU).
+Agente de monitoramento do Diario Oficial da Uniao (DOU) - pronto para Render.
 
-Parametros da fonte (URL leiturajornal):
-  data  -> varia automaticamente (usa o dia atual em cada execucao)
-  secao -> FIXA por agente (ex.: do3)
-
-PALAVRAS-CHAVE PARAMETRIZAVEIS:
-  Cada agente tem uma lista de keywords editavel pelo formulario da interface
-  (endpoint PUT /api/agents/<id>/keywords) e persistida em agents_db.json.
+Fonte (URL leiturajornal): data (dia atual, automatico) + secao (FIXA, ex.: do3).
+Palavras-chave PARAMETRIZAVEIS via formulario da interface e persistidas em arquivo.
 """
-import json, re, uuid, datetime, threading
+import os, json, re, uuid, datetime, threading
 from urllib.parse import urlencode
 import requests
 from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 LOCK = threading.Lock()
-DB_FILE = "agents_db.json"
+
+DB_FILE = os.environ.get("DB_FILE", "agents_db.json")
 
 UA = {"User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36")}
@@ -24,7 +20,6 @@ UA = {"User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
 DEFAULT_KEYWORDS = ["geoprocessamento", "mapeamento", "plataforma",
                     "sensoriamento", "imageamento", "sistemas"]
 
-# ----------------------------------------------------------- persistencia
 def load_db():
     try:
         with open(DB_FILE, encoding="utf-8") as f:
@@ -40,20 +35,15 @@ def seed():
     db = load_db()
     if not db["agents"]:
         db["agents"].append({
-            "id": "ag-dou-geo",
-            "name": "Monitor DOU - Geotecnologias",
-            "type": "dou",
-            "source": "https://www.in.gov.br/leiturajornal",
-            "secao": "do3",                       # FIXA
-            "keywords": list(DEFAULT_KEYWORDS),   # PARAMETRIZAVEL
-            "active": True,
+            "id": "ag-dou-geo", "name": "Monitor DOU - Geotecnologias", "type": "dou",
+            "source": "https://www.in.gov.br/leiturajornal", "secao": "do3",
+            "keywords": list(DEFAULT_KEYWORDS), "active": True,
             "created": datetime.date.today().isoformat(),
             "last_run": None, "results": []
         })
         save_db(db)
 seed()
 
-# ----------------------------------------------------------- coletor DOU
 def today_ddmmyyyy():
     return datetime.date.today().strftime("%d-%m-%Y")
 
@@ -94,15 +84,11 @@ def run_dou_agent(agent, data=None):
             "scanned": len(articles), "found": len(hits),
             "ran_at": datetime.datetime.now().isoformat(timespec="seconds"), "items": hits}
 
-# ----------------------------------------------------------- helpers
 def find(db, aid):
     return next((a for a in db["agents"] if a["id"] == aid), None)
 
 def parse_keywords(value):
-    if isinstance(value, list):
-        items = value
-    else:
-        items = str(value).split(",")
+    items = value if isinstance(value, list) else str(value).split(",")
     seen, out = set(), []
     for k in items:
         k = k.strip()
@@ -110,7 +96,6 @@ def parse_keywords(value):
             seen.add(k.lower()); out.append(k)
     return out
 
-# ----------------------------------------------------------- API agentes
 @app.route("/api/agents", methods=["GET"])
 def list_agents():
     return jsonify(load_db()["agents"])
@@ -120,15 +105,12 @@ def create_agent():
     b = request.get_json(force=True)
     with LOCK:
         db = load_db()
-        ag = {
-            "id": "ag-" + uuid.uuid4().hex[:8],
-            "name": b.get("name", "Novo agente"), "type": "dou",
-            "source": b.get("source", "https://www.in.gov.br/leiturajornal"),
-            "secao": (b.get("secao", "do3") or "do3").lower(),
-            "keywords": parse_keywords(b.get("keywords", DEFAULT_KEYWORDS)),
-            "active": True, "created": datetime.date.today().isoformat(),
-            "last_run": None, "results": []
-        }
+        ag = {"id": "ag-" + uuid.uuid4().hex[:8], "name": b.get("name", "Novo agente"),
+              "type": "dou", "source": b.get("source", "https://www.in.gov.br/leiturajornal"),
+              "secao": (b.get("secao", "do3") or "do3").lower(),
+              "keywords": parse_keywords(b.get("keywords", DEFAULT_KEYWORDS)),
+              "active": True, "created": datetime.date.today().isoformat(),
+              "last_run": None, "results": []}
         db["agents"].append(ag); save_db(db)
     return jsonify(ag), 201
 
@@ -140,7 +122,6 @@ def delete_agent(aid):
         save_db(db)
     return jsonify({"ok": True})
 
-# ----------- FORMULARIO DE PALAVRAS-CHAVE (parametrizavel) -----------
 @app.route("/api/agents/<aid>/keywords", methods=["GET"])
 def get_keywords(aid):
     ag = find(load_db(), aid)
@@ -159,7 +140,6 @@ def set_keywords(aid):
         ag["keywords"] = kws; save_db(db)
     return jsonify({"ok": True, "keywords": kws})
 
-# ----------------------------------------------------------- execucao
 @app.route("/api/agents/<aid>/run", methods=["POST"])
 def run_agent(aid):
     data = request.args.get("data")
@@ -176,9 +156,14 @@ def run_agent(aid):
         save_db(db)
     return jsonify(result)
 
+@app.route("/healthz")
+def healthz():
+    return jsonify({"status": "ok"})
+
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=False)
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
