@@ -1,5 +1,0 @@
-__pycache__/
-*.pyc
-agents_db.json
-.venv/
-.env
