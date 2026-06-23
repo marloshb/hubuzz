@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agente DOU - Monitoramento por palavras-chave</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f4f6fb;--surface:#fff;--line:#e6eaf2;--line2:#eef1f7;--ink:#0f1b34;--ink2:#46546f;--ink3:#8a96ac;--p:#2f5bd6;--psoft:#eaf0ff;--green:#13a36b;--gsoft:#e3f7ee;--red:#dc3a4b;--rsoft:#fde6e8;font-family:'Inter',system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}body{background:var(--bg);color:var(--ink);font-size:14px}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 22px 70px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:8px}.mk{width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,#2f5bd6,#7c4dd0);color:#fff;font-weight:800;display:grid;place-items:center;font-size:16px}
+h1{font-size:22px;font-weight:800;letter-spacing:-.4px}header p{color:var(--ink2);font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--green);animation:pl 2s infinite}@keyframes pl{0%{box-shadow:0 0 0 0 rgba(19,163,107,.5)}70%{box-shadow:0 0 0 7px rgba(19,163,107,0)}100%{box-shadow:0 0 0 0 rgba(19,163,107,0)}}
+.grid{display:grid;grid-template-columns:400px 1fr;gap:20px;margin-top:22px;align-items:start}@media(max-width:920px){.grid{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 3px rgba(15,27,52,.07)}
+.ch{padding:15px 18px;border-bottom:1px solid var(--line2);font-weight:700;font-size:14.5px;display:flex;align-items:center;gap:8px}
+.cb{padding:18px}
+label{display:block;font-size:12px;font-weight:600;color:var(--ink2);margin:0 0 6px}
+input,select{width:100%;height:40px;border:1px solid var(--line);border-radius:9px;padding:0 12px;font-size:13.5px;font-family:inherit;outline:none;background:#fff}
+input:focus,select:focus{border-color:var(--p);box-shadow:0 0 0 3px var(--psoft)}
+.hint{font-size:11.5px;color:var(--ink3);margin-top:7px;line-height:1.45}
+.btn{height:40px;padding:0 16px;border:1px solid var(--line);border-radius:9px;background:#fff;font-weight:600;font-size:13px;color:var(--ink2);cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.btn:hover{background:#f8fafc}.btn-p{background:var(--p);border-color:var(--p);color:#fff}.btn-p:hover{background:#274fbf}.btn-sm{height:33px;padding:0 11px;font-size:12px}.btn:disabled{opacity:.55;cursor:not-allowed}
+.kwbox{border:1px dashed #cdd7ec;border-radius:11px;padding:11px;min-height:54px;display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start;background:#fbfcff}
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--psoft);color:var(--p);font-size:12.5px;font-weight:600;padding:5px 8px 5px 11px;border-radius:20px}
+.chip x{cursor:pointer;font-weight:800;font-size:14px;line-height:1;width:16px;height:16px;display:grid;place-items:center;border-radius:50%;background:rgba(47,91,214,.16)}.chip x:hover{background:var(--red);color:#fff}
+.addrow{display:flex;gap:8px;margin-top:10px}.addrow input{flex:1}
+.saved{font-size:12px;font-weight:600;color:var(--green);opacity:0;transition:.3s}.saved.on{opacity:1}
+.meta{font-size:11.5px;color:var(--ink2);display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:4px}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}@media(max-width:620px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px}.kpi .v{font-size:22px;font-weight:800}.kpi .l{font-size:11px;color:var(--ink2);margin-top:3px}
+.res{border:1px solid var(--line);border-left:3px solid var(--p);border-radius:10px;padding:13px 15px;margin-bottom:11px}
+.res .rt{font-weight:700;font-size:13.5px;margin-bottom:3px}.res .ro{font-size:11.5px;color:var(--ink3);margin-bottom:7px}
+.res .sn{font-size:12.5px;color:var(--ink2);line-height:1.5}.res .ft{display:flex;align-items:center;gap:7px;margin-top:9px;flex-wrap:wrap}
+.kw{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px;background:#fff3cd;color:#946c00;border:1px solid #f4e2a0}
+.empty{text-align:center;color:var(--ink3);padding:40px 12px;font-size:13px}
+.spin{width:15px;height:15px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;display:inline-block;animation:sp .7s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+.bg{display:inline-flex;font-size:11px;font-weight:600;padding:3px 9px;border-radius:30px;background:#eef1f7;color:var(--ink2)}
+</style></head>
+<body><div class="wrap">
+<header>
+  <div class="mk">DOU</div>
+  <div><h1>Agente de Monitoramento &middot; DOU</h1>
+  <p>Se&ccedil;&atilde;o <b id="hsec">DO3</b> (fixa) &middot; data autom&aacute;tica (dia atual) &middot; <span class="dot"></span> backend ativo</p></div>
+</header>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <div class="ch">&#128270; Palavras-chave <span class="bg" id="kwcount" style="margin-left:auto"></span></div>
+      <div class="cb">
+        <label>Termos monitorados (clique no &times; para remover)</label>
+        <div class="kwbox" id="kwbox"></div>
+        <div class="addrow">
+          <input id="kwinput" placeholder="Digite um termo e tecle Enter">
+          <button class="btn" id="kwadd">Adicionar</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:14px">
+          <button class="btn btn-p" id="kwsave">&#128190; Salvar palavras-chave</button>
+          <button class="btn btn-sm" id="kwreset">Restaurar padr&atilde;o</button>
+          <span class="saved" id="savedmsg">&#10003; salvo</span>
+        </div>
+        <div class="hint">As palavras-chave ficam salvas no agente e s&atilde;o usadas em todas as execu&ccedil;&otilde;es. A busca &eacute; feita em t&iacute;tulo, subt&iacute;tulo, conte&uacute;do e &oacute;rg&atilde;o de cada mat&eacute;ria.</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <div class="ch">&#129302; Agente</div>
+      <div class="cb">
+        <div style="font-weight:700;font-size:14px" id="agname">&mdash;</div>
+        <div class="meta">
+          <span>&#128225; <b id="agsec">do3</b> (fixa)</span>
+          <span>&#128197; data: dia atual</span>
+          <span>&#9201; <span id="aglast">nunca executado</span></span>
+        </div>
+        <div class="hint" style="margin-top:9px">Fonte: <code id="agurl"></code></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch">Resultados da coleta</div>
+    <div class="cb">
+      <div class="toolbar">
+        <label style="margin:0;font-weight:700">Data:</label>
+        <input id="run-date" style="width:150px;height:38px">
+        <button class="btn btn-p" id="btn-run">&#9654; Executar agora</button>
+      </div>
+      <div id="results"><div class="empty">Defina as palavras-chave ao lado e clique em <b>Executar agora</b> para coletar o DOU.</div></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const API="/api"; let AGENT=null, KW=[];
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function today(){const d=new Date(),p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}-${p(d.getMonth()+1)}-${d.getFullYear()}`;}
+const DEFAULTS=["geoprocessamento","mapeamento","plataforma","sensoriamento","imageamento","sistemas"];
+function renderChips(){
+  $('#kwcount').textContent=KW.length+' termo(s)';
+  $('#kwbox').innerHTML=KW.length?KW.map((k,i)=>`<span class="chip">${esc(k)} <x onclick="rmKw(${i})">&times;</x></span>`).join(''):'<span style="color:#8a96ac;font-size:12.5px">Nenhum termo. Adicione abaixo.</span>';
+}
+function rmKw(i){KW.splice(i,1);renderChips();}
+function addKw(){const v=$('#kwinput').value.trim();if(v&&!KW.some(k=>k.toLowerCase()===v.toLowerCase())){KW.push(v);renderChips();}$('#kwinput').value='';}
+$('#kwadd').addEventListener('click',addKw);
+$('#kwinput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addKw();}});
+$('#kwreset').addEventListener('click',()=>{KW=[...DEFAULTS];renderChips();});
+async function saveKw(){
+  if(!AGENT)return;if(!KW.length){alert('Adicione ao menos uma palavra-chave.');return;}
+  const btn=$('#kwsave');btn.disabled=true;btn.innerHTML='<span class="spin"></span> Salvando...';
+  try{const r=await fetch(`${API}/agents/${AGENT.id}/keywords`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({keywords:KW})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||'falha');KW=d.keywords;renderChips();
+    const m=$('#savedmsg');m.classList.add('on');setTimeout(()=>m.classList.remove('on'),1800);
+  }catch(e){alert('Erro ao salvar: '+e.message);}
+  btn.disabled=false;btn.innerHTML='&#128190; Salvar palavras-chave';
+}
+$('#kwsave').addEventListener('click',saveKw);
+async function loadAgent(){
+  const ags=await (await fetch(`${API}/agents`)).json();AGENT=ags[0];if(!AGENT)return;
+  KW=[...AGENT.keywords];renderChips();
+  $('#agname').textContent=AGENT.name;$('#hsec').textContent=AGENT.secao.toUpperCase();$('#agsec').textContent=AGENT.secao;
+  $('#aglast').textContent=AGENT.last_run?('rodou '+AGENT.last_run.replace('T',' ')):'nunca executado';
+  $('#run-date').value=today();$('#agurl').textContent=`leiturajornal?data=${today()}&secao=${AGENT.secao}`;
+  if(AGENT.results&&AGENT.results.length)renderResults({items:AGENT.results,summary:AGENT.last_summary});
+}
+function renderResults(data){
+  const items=data.items||[],s=data.summary||{};
+  $('#results').innerHTML=`
+    <div class="kpis">
+      <div class="kpi"><div class="v">${s.scanned??'-'}</div><div class="l">mat&eacute;rias varridas</div></div>
+      <div class="kpi"><div class="v" style="color:var(--p)">${items.length}</div><div class="l">com palavra-chave</div></div>
+      <div class="kpi"><div class="v">${esc(s.secao?String(s.secao).toUpperCase():'-')}</div><div class="l">se&ccedil;&atilde;o (fixa)</div></div>
+      <div class="kpi"><div class="v" style="font-size:15px;padding-top:4px">${esc(s.data||'-')}</div><div class="l">data consultada</div></div>
+    </div>
+    ${items.length?items.map(r=>`
+      <div class="res">
+        <div class="rt">${esc(r.title)} <span class="bg" style="font-size:10px">${esc(r.artType)}</span></div>
+        <div class="ro">${esc(r.org)} &middot; p&aacute;g ${esc(r.page)} &middot; ed ${esc(r.edition)} &middot; ${esc(r.pubDate)}</div>
+        <div class="sn">${esc(r.snippet)}...</div>
+        <div class="ft">${r.matched.map(k=>`<span class="kw">&#9873; ${esc(k)}</span>`).join('')}
+          <a class="btn btn-sm" href="${esc(r.link)}" target="_blank" style="margin-left:auto;text-decoration:none">Abrir no DOU &#8599;</a></div>
+      </div>`).join(''):'<div class="empty">Nenhuma mat&eacute;ria com as palavras-chave nesta data/se&ccedil;&atilde;o.</div>'}`;
+}
+async function runAgent(){
+  if(!AGENT)return;const btn=$('#btn-run'),date=$('#run-date').value.trim();
+  btn.disabled=true;btn.innerHTML='<span class="spin"></span> Coletando...';
+  $('#results').innerHTML='<div class="empty"><span class="spin" style="border-color:#2f5bd6;border-top-color:transparent"></span><br><br>Baixando e filtrando o Di&aacute;rio Oficial...<br><small>A se&ccedil;&atilde;o tem milhares de mat&eacute;rias.</small></div>';
+  try{const r=await fetch(`${API}/agents/${AGENT.id}/run?data=${encodeURIComponent(date)}`,{method:'POST'});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||'falha');
+    renderResults({items:d.items,summary:{scanned:d.scanned,found:d.found,secao:d.secao,data:d.data}});
+    $('#aglast').textContent='rodou '+d.ran_at.replace('T',' ');
+  }catch(e){$('#results').innerHTML=`<div class="empty" style="color:var(--red)">Erro: ${esc(e.message)}</div>`;}
+  btn.disabled=false;btn.innerHTML='&#9654; Executar agora';
+}
+$('#btn-run').addEventListener('click',runAgent);
+$('#run-date').addEventListener('input',e=>{if(AGENT)$('#agurl').textContent=`leiturajornal?data=${e.target.value}&secao=${AGENT.secao}`;});
+loadAgent();
+</script>
+</body></html>
