@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Agente DOU</title>
+<style>
+  :root{--bg:#0b1220;--card:#11203a;--accent:#34d399;--txt:#e2e8f0;--muted:#94a3b8}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,Segoe UI,Roboto,sans-serif}
+  body{background:var(--bg);color:var(--txt);min-height:100vh}
+  header{padding:24px 32px;border-bottom:1px solid #1f2d4a;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+  header a{color:var(--bg);background:var(--accent);padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600}
+  main{padding:32px;max-width:900px;margin:0 auto}
+  textarea,select,button{width:100%;padding:12px 14px;border-radius:8px;border:1px solid #1f2d4a;background:var(--card);color:var(--txt);font-size:14px;margin-bottom:12px}
+  button{background:var(--accent);color:var(--bg);font-weight:700;cursor:pointer;border:none}
+  pre{background:var(--card);padding:16px;border-radius:8px;overflow:auto;border:1px solid #1f2d4a;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🤖 Agente DOU</h1>
+  <a href="/">📊 Voltar ao Hub</a>
+</header>
+<main>
+  <label>Palavras-chave (uma por linha ou separadas por vírgula)</label>
+  <textarea id="kw" rows="4" placeholder="edital&#10;fomento&#10;chamada pública"></textarea>
+  <select id="secao">
+    <option value="do1">Seção 1 — Atos normativos</option>
+    <option value="do2">Seção 2 — Pessoal</option>
+    <option value="do3">Seção 3 — Contratos e editais</option>
+  </select>
+  <button onclick="run()">Executar busca no DOU</button>
+  <pre id="out">Aguardando execução...</pre>
+</main>
+<script>
+async function run(){
+  const raw=document.getElementById('kw').value;
+  const kw=raw.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
+  const secao=document.getElementById('secao').value;
+  const out=document.getElementById('out');
+  out.textContent='Executando...';
+  try{
+    const r=await fetch('/api/dou/buscar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keywords:kw,secao,dias:7})});
+    const data=await r.json();
+    out.textContent=JSON.stringify(data,null,2);
+  }catch(e){out.textContent='Erro: '+e.message;}
+}
+</script>
+</body>
+</html>
