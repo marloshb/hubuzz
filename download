@@ -1,8 +1,0 @@
-__pycache__/
-*.pyc
-.env
-.venv/
-*.zip
-*.tmp
-_stage.json
-.DS_Store
