@@ -1,17 +1,11 @@
-"""
-Hubuzz - Backend unificado (Flask).
-Rotas:
-  GET  /               -> Hub completo (static/index.html)
-  GET  /api/health     -> healthcheck {"status":"ok"}
-  POST /api/dou/buscar -> busca no DOU (SEMPRE responde JSON, nunca HTML)
-"""
-from __future__ import annotations
-
+"""Hubuzz - Backend Flask. Busca REAL no DOU via endpoint /leiturajornal (JSON)."""
 import os
+import re
+import json
+import time
 import datetime as dt
 import logging
 import traceback
-from typing import Any
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
@@ -23,23 +17,71 @@ logger = logging.getLogger("hubuzz")
 app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
 
-DOU_BASE = "https://www.in.gov.br/consulta/-/buscar/dou"
-TIMEOUT = 20
+DOU_URL = "https://www.in.gov.br/leiturajornal"
+TIMEOUT = 45
+RETRIES = 3
+USER_AGENTS = [
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+    ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+     "(KHTML, like Gecko) Version/17.4 Safari/605.1.15"),
+    ("Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"),
+]
+PARAMS_RE = re.compile(r'id="params"[^>]*>(.*?)</script>', re.S)
 
 
 @app.get("/")
-def hub() -> Any:
+def hub():
     return send_from_directory(app.static_folder, "index.html")
 
 
+@app.get("/agente")
+def agente():
+    return send_from_directory(app.static_folder, "agente.html")
+
+
 @app.get("/api/health")
-def health() -> Any:
+def health():
     return jsonify(status="ok", time=dt.datetime.utcnow().isoformat() + "Z")
 
 
+def _fetch_articles(secao, data):
+    last_err = None
+    for attempt in range(RETRIES):
+        headers = {
+            "User-Agent": USER_AGENTS[attempt % len(USER_AGENTS)],
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "pt-BR,pt;q=0.9",
+        }
+        params = {"data": data, "secao": secao}
+        try:
+            resp = requests.get(DOU_URL, params=params, headers=headers, timeout=TIMEOUT)
+            if resp.status_code == 200:
+                m = PARAMS_RE.search(resp.text or "")
+                if not m:
+                    last_err = "bloco de dados (#params) nao encontrado"
+                else:
+                    arr = json.loads(m.group(1).strip()).get("jsonArray", [])
+                    return arr, resp.url, None
+            else:
+                last_err = "HTTP %s" % resp.status_code
+        except requests.RequestException as exc:
+            last_err = exc.__class__.__name__
+        if attempt < RETRIES - 1:
+            time.sleep(1.2 * (attempt + 1))
+    return [], DOU_URL, last_err
+
+
+def _match(article, termo):
+    blob = " ".join([
+        str(article.get("title", "")), str(article.get("subTitulo", "")),
+        str(article.get("content", "")), str(article.get("hierarchyStr", "")),
+    ]).lower()
+    return termo.lower() in blob
+
+
 @app.post("/api/dou/buscar")
-def buscar_dou() -> Any:
-    """Busca publicacoes no DOU. SEMPRE retorna JSON, mesmo em erro."""
+def buscar_dou():
     try:
         payload = request.get_json(silent=True) or {}
         keywords = [k.strip() for k in payload.get("keywords", []) if str(k).strip()]
@@ -47,46 +89,39 @@ def buscar_dou() -> Any:
             return jsonify(ok=False, error="Informe ao menos uma palavra-chave."), 400
 
         secao = payload.get("secao", "do3")
-        dias = int(payload.get("dias", 7))
-        desde = (dt.date.today() - dt.timedelta(days=dias)).strftime("%d-%m-%Y")
-        ate = dt.date.today().strftime("%d-%m-%Y")
+        data = payload.get("data") or dt.date.today().strftime("%d-%m-%Y")
 
-        resultados: list[dict[str, Any]] = []
-        avisos: list[str] = []
-        headers = {
-            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) "
-                           "Chrome/124.0 Safari/537.36"),
-            "Accept": "text/html,application/xhtml+xml",
-        }
+        artigos, url, erro = _fetch_articles(secao, data)
+        if erro and not artigos:
+            return jsonify(ok=False,
+                           error="DOU indisponivel no momento (%s). Tente novamente." % erro,
+                           consulta={"secao": secao, "data": data, "fonte": url}), 200
 
+        resultados = []
         for termo in keywords:
-            item: dict[str, Any] = {"termo": termo, "status": None,
-                                    "fonte": None, "encontrou": False, "tamanho": 0}
-            try:
-                params = {"q": termo, "s": secao, "exactDate": "personalizado",
-                          "publishFrom": desde, "publishTo": ate, "delta": 20}
-                resp = requests.get(DOU_BASE, params=params, headers=headers, timeout=TIMEOUT)
-                texto = resp.text or ""
-                item["status"] = resp.status_code
-                item["fonte"] = resp.url
-                item["encontrou"] = termo.lower() in texto.lower()
-                item["tamanho"] = len(texto)
-                if resp.status_code >= 400:
-                    avisos.append(f"'{termo}': DOU respondeu {resp.status_code}.")
-            except requests.Timeout:
-                avisos.append(f"'{termo}': tempo esgotado ao consultar o DOU.")
-            except requests.RequestException as exc:
-                avisos.append(f"'{termo}': falha de conexao ({exc.__class__.__name__}).")
-            resultados.append(item)
+            hits = []
+            for a in artigos:
+                if _match(a, termo):
+                    ut = a.get("urlTitle", "")
+                    hits.append({
+                        "titulo": a.get("title", "") or a.get("titulo", ""),
+                        "orgao": a.get("hierarchyStr", ""),
+                        "tipo": a.get("artType", ""),
+                        "pagina": a.get("numberPage", ""),
+                        "data_pub": a.get("pubDate", ""),
+                        "trecho": (a.get("content", "") or "")[:300],
+                        "link": ("https://www.in.gov.br/web/dou/-/" + ut) if ut else url,
+                    })
+            resultados.append({"termo": termo, "encontrou": len(hits) > 0,
+                               "total": len(hits), "materias": hits[:20]})
 
         return jsonify(
             ok=True,
-            consulta={"keywords": keywords, "secao": secao, "periodo": [desde, ate]},
+            consulta={"keywords": keywords, "secao": secao, "data": data,
+                      "fonte": url, "materias_varridas": len(artigos)},
             resultados=resultados,
-            avisos=avisos,
-            nota=("O DOU nao oferece API JSON oficial; esta consulta usa o "
-                  "buscador publico e retorna o link da pesquisa para conferencia."),
+            nota=("Consulta real ao DOU via endpoint /leiturajornal (JSON). "
+                  "Varre todas as materias da secao na data e conta ocorrencias reais."),
         )
     except Exception:
         logger.error("Erro inesperado:\n%s", traceback.format_exc())
