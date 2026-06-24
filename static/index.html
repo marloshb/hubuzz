@@ -77,7 +77,12 @@ a{color:inherit;text-decoration:none}button{font-family:inherit;cursor:pointer}:
 .cki{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--line2);font-size:13px}.ck-ok{color:var(--green)}.ck-no{color:var(--red)}
 .chart{position:relative;height:260px}.chart.sm{height:210px}
 @media(max-width:1100px){.sidebar{position:fixed;left:0;top:0;z-index:60;transform:translateX(-100%);transition:.25s}.sidebar.open{transform:none;box-shadow:var(--sh-lg)}.view{padding:18px}}
-@media(min-width:1101px){#mt{display:none}}</style></head>
+@media(min-width:1101px){#mt{display:none}}
+.kwchip{display:inline-flex;align-items:center;gap:7px;background:#eef3ff;color:#2f5bd6;border:1px solid #d8e2fb;padding:6px 10px;border-radius:20px;font-size:13px;font-weight:600}
+.kwchip button{border:0;background:#c9d6f5;color:#2f5bd6;width:18px;height:18px;border-radius:50%;line-height:1;font-size:13px;cursor:pointer}
+.kwchip button:hover{background:#dc3a4b;color:#fff}
+.alert.ok .ic{background:#e3f7ee;color:#13a36b}.alert.warn .ic{background:#fdeede;color:#e8801f}.alert.err .ic{background:#fde6e8;color:#dc3a4b}.alert.info .ic{background:#eef1f6;color:#5b6677}
+</style></head>
 <body><div class="shell">
  <aside class="sidebar" id="sidebar">
   <div class="brand"><div class="mk">HO</div><div><b>Hub de Oportunidades</b><span>Inteligencia Institucional</span></div></div>
@@ -136,7 +141,7 @@ function card(t,b,a){return `<div class="card"><div class="ch"><h3>${E(t)}</h3><
 function srcDot(s){return s==='ativa'?'<span class="dot d-g"></span>':s==='falha'?'<span class="dot d-r"></span>':'<span class="dot d-o"></span>';}
 let CHARTS=[];
 function clearCharts(){CHARTS.forEach(c=>{try{c.destroy()}catch(e){}});CHARTS=[];}
-const NAV=[{g:'Visao Geral'},{h:'dashboard',ic:'\u{1F4CA}',l:'Painel Executivo'},{h:'oportunidades',ic:'\u{1F4CB}',l:'Oportunidades',tag:'8'},{h:'pipeline',ic:'\u{1F500}',l:'Workflow / Kanban'},{g:'Inteligencia de IA'},{h:'agentes',ic:'\u{1F916}',l:'Agentes de IA',tag:'8'},{h:'orquestracao',ic:'\u2699',l:'Orquestracao'},{h:'fontes',ic:'\u{1F4E1}',l:'Fontes de Dados'},{g:'Gestao'},{h:'analytics',ic:'\u{1F4C8}',l:'Analytics'},{h:'config',ic:'\u{1F527}',l:'Configuracoes'},{g:'Tempo real'},{h:'dou',ic:'\u{1F50E}',l:'Busca DOU ao vivo',tag:'LIVE'}];
+const NAV=[{g:'Visao Geral'},{h:'dashboard',ic:'\u{1F4CA}',l:'Painel Executivo'},{h:'oportunidades',ic:'\u{1F4CB}',l:'Oportunidades',tag:'8'},{h:'pipeline',ic:'\u{1F500}',l:'Workflow / Kanban'},{g:'Inteligencia de IA'},{h:'agentes',ic:'\u{1F916}',l:'Agentes de IA',tag:'8'},{h:'orquestracao',ic:'\u2699',l:'Orquestracao'},{h:'keywords',ic:'\u{1F511}',l:'Palavras-chave',tag:'novo'},{h:'fontes',ic:'\u{1F4E1}',l:'Fontes de Dados'},{g:'Gestao'},{h:'analytics',ic:'\u{1F4C8}',l:'Analytics'},{h:'config',ic:'\u{1F527}',l:'Configuracoes'}];
 function renderNav(active){document.getElementById('nav').innerHTML=NAV.map(it=>it.g?`<div class="grp">${E(it.g)}</div>`:`<a class="${active.split('/')[0]===it.h?'on':''}" onclick="go('${it.h}')"><span class="ic">${it.ic}</span>${E(it.l)}${it.tag?`<span class="tag">${it.tag}</span>`:''}</a>`).join('');}
 </script>
 <script>
@@ -262,6 +267,65 @@ function mkCharts(route){
   mk('aAcc',{type:'bar',data:{labels:AG.map(a=>a.n.replace('Agente de ','')),datasets:[{data:AG.map(a=>a.ac),backgroundColor:'#7c4dd0',borderRadius:6}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{...grid,min:80,max:100},y:ng}}});
  }
 }
+
+/* ====================== PAGINA: PALAVRAS-CHAVE ====================== */
+const KW_STORE='hub_keywords';
+const KW_DEFAULT=['geoprocessamento','edital','licitacao','fomento','inovacao','sustentabilidade'];
+function kwGet(){try{const v=JSON.parse(localStorage.getItem(KW_STORE));return Array.isArray(v)&&v.length?v:KW_DEFAULT.slice();}catch(_){return KW_DEFAULT.slice();}}
+function kwSet(a){localStorage.setItem(KW_STORE,JSON.stringify(a));}
+function kwAdd(){const i=document.getElementById('kwInput');const t=(i.value||'').trim();if(!t)return;const a=kwGet();if(!a.map(x=>x.toLowerCase()).includes(t.toLowerCase())){a.push(t);kwSet(a);}i.value='';render('keywords');}
+function kwDel(t){kwSet(kwGet().filter(x=>x!==t));render('keywords');}
+function kwReset(){kwSet(KW_DEFAULT.slice());render('keywords');}
+function pgKeywords(){
+ const kws=kwGet();
+ const chips=kws.map(t=>`<span class="kwchip">${E(t)}<button title="remover" onclick="kwDel('${t.replace(/'/g,"\\'")}')">&times;</button></span>`).join('')||'<span class="muted">Nenhuma palavra-chave cadastrada.</span>';
+ const k=`<div class="grid g4">
+  ${kpi({ic:'\u{1F511}',v:kws.length,l:'Palavras-chave ativas',c:'#2f5bd6',s:'#eaf0ff'})}
+  ${kpi({ic:'\u{1F4E1}',v:SRC.length,l:'Fontes monitoradas',c:'#0fa3b1',s:'#e0f6f8'})}
+  ${kpi({ic:'\u{1F916}',v:'Captura',l:'Agente conectado',c:'#7c4dd0',s:'#f0e9fb'})}
+  ${kpi({ic:'\u{1F50D}',v:'DOU',l:'Busca em tempo real',c:'#13a36b',s:'#e3f7ee'})}</div>`;
+ const editor=card('Parametros da busca',
+   `<p class="muted" style="margin-bottom:12px">Estas palavras-chave alimentam o Agente de Captura e ficam salvas neste navegador.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">${chips}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input id="kwInput" placeholder="Nova palavra-chave (ex.: cartografia)" style="flex:1;min-width:180px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-family:inherit" onkeydown="if(event.key==='Enter')kwAdd()">
+      <select id="kwSecao" style="padding:11px;border:1px solid var(--line);border-radius:10px;font-family:inherit">
+        <option value="do1">Secao 1 - Atos normativos</option>
+        <option value="do2">Secao 2 - Pessoal</option>
+        <option value="do3" selected>Secao 3 - Contratos e editais</option>
+      </select>
+      <button class="btn btn-p" id="kwRun" onclick="kwBuscar()">\u{1F50E} Buscar agora</button>
+      <button class="btn btn-sm" onclick="kwAdd()">+ Adicionar</button>
+      <button class="btn btn-sm" onclick="kwReset()">Restaurar</button>
+    </div>`);
+ const runner=card('Resultados','<div id="kwOut"><div class="muted">Clique em <b>Buscar agora</b> para consultar o DOU.</div></div>');
+ return ph('Busca DOU ao vivo','Consulta real ao Diario Oficial da Uniao (endpoint leiturajornal). As palavras-chave ficam salvas neste navegador.')
+   +k+`<div class="mt">${editor}</div><div class="mt">${runner}</div>`;
+}
+async function kwBuscar(){
+ const btn=document.getElementById('kwRun'), out=document.getElementById('kwOut');
+ const kws=kwGet(); const secao=(document.getElementById('kwSecao')||{}).value||'do3';
+ if(!kws.length){out.innerHTML='<div class="muted">Cadastre ao menos uma palavra-chave.</div>';return;}
+ btn.disabled=true; btn.textContent='Buscando...'; out.innerHTML='<div class="muted">Consultando o DOU...</div>';
+ try{
+   const r=await fetch('/api/dou/buscar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keywords:kws,secao:secao})});
+   const raw=await r.text(); let d;
+   try{d=JSON.parse(raw);}catch(_){out.innerHTML=alertBox('err','Backend offline','A API nao respondeu em JSON. Abra o hub pela URL do Render (onrender.com).');return;}
+   if(!d.ok){out.innerHTML=alertBox('warn','DOU indisponivel',d.error||'Falha na busca');return;}
+   let h='<div class="muted sm" style="margin-bottom:10px">Data: '+E(d.consulta.data)+' &middot; '+d.consulta.materias_varridas+' materias varridas na secao</div>';
+   h+=d.resultados.map(it=>{
+     const cls=it.encontrou?'ok':'info', icon=it.encontrou?'\u2714':'\u2139';
+     let mats='';
+     (it.materias||[]).slice(0,5).forEach(m=>{mats+='<div style="margin-top:6px"><a href="'+(m.link||'#')+'" target="_blank">'+E(m.titulo||'(sem titulo)')+'</a><div class="muted sm">'+E(m.orgao||'')+(m.pagina?(' &middot; p.'+E(''+m.pagina)):'')+'</div></div>';});
+     return `<div class="alert ${cls}"><div class="ic">${icon}</div><div style="flex:1"><b>${E(it.termo)}</b> <span class="muted sm">&middot; ${it.total} ocorrencia(s)</span>${mats||'<p class="muted sm">Sem ocorrencias na data.</p>'}</div></div>`;
+   }).join('');
+   h+='<p class="muted sm" style="margin-top:10px">'+E(d.nota||'')+'</p>';
+   out.innerHTML=h;
+ }catch(e){out.innerHTML=alertBox('err','Erro de rede',String(e));}
+ finally{btn.disabled=false; btn.textContent='\u{1F50E} Buscar agora';}
+}
+function alertBox(t,title,msg){const c={ok:['#e3f7ee','#13a36b','\u2714'],warn:['#fdeede','#e8801f','\u26A0'],err:['#fde6e8','#dc3a4b','\u2716'],info:['#eef1f6','#5b6677','\u2139']}[t]||['#eef1f6','#5b6677','\u2139'];return `<div class="alert"><div class="ic" style="background:${c[0]};color:${c[1]}">${c[2]}</div><div><b>${title}</b><p>${msg}</p></div></div>`;}
+
 function render(route){
  clearCharts();
  const seg=route.split('/'); let html='';
@@ -272,10 +336,10 @@ function render(route){
   case 'pipeline':html=pgPipeline();break;
   case 'agentes':html=pgAgentes();break;
   case 'orquestracao':html=pgOrquestracao();break;
+  case 'keywords':html=pgKeywords();break;
   case 'fontes':html=pgFontes();break;
   case 'analytics':html=pgAnalytics();break;
   case 'config':html=pgConfig();break;
-  case 'dou':html=pgDOU();break;
   default:html=pgDashboard();route='dashboard';
  }
  document.getElementById('view').innerHTML=html;
@@ -283,71 +347,7 @@ function render(route){
  document.getElementById('sidebar').classList.remove('open');
  window.scrollTo(0,0);
  setTimeout(()=>mkCharts(seg[0]),30);
-  if(seg[0]==='dou')setTimeout(initDOU,40);
 }
-
-/* ============ Busca DOU ao vivo (integracao backend Flask) ============ */
-const DOU_KW_KEY='hubuzz.dou.keywords';
-const DOU_SECAO_KEY='hubuzz.dou.secao';
-function getKw(){return localStorage.getItem(DOU_KW_KEY)||'geoprocessamento, edital, licitacao';}
-function getSecao(){return localStorage.getItem(DOU_SECAO_KEY)||'do3';}
-function pgDOU(){
- const kw=getKw(), sec=getSecao();
- const form=`<div class="kv2" style="display:block">
-   <label class="s" style="display:block;margin-bottom:6px"><b>Palavras-chave</b> (separadas por virgula)</label>
-   <input id="douKw" value="${kw.replace(/"/g,'&quot;')}" style="width:100%;padding:11px 13px;border:1px solid var(--bd,#d9dee8);border-radius:8px;font-size:14px">
-   <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">
-     <label class="s">Secao:&nbsp;
-       <select id="douSec" style="padding:9px 11px;border:1px solid #d9dee8;border-radius:8px">
-         <option value="do1"${sec==='do1'?' selected':''}>Secao 1 - Atos normativos</option>
-         <option value="do2"${sec==='do2'?' selected':''}>Secao 2 - Pessoal</option>
-         <option value="do3"${sec==='do3'?' selected':''}>Secao 3 - Contratos e editais</option>
-       </select>
-     </label>
-     <button class="btn btn-p btn-sm" onclick="runDOU()">&#128269; Buscar agora</button>
-     <button class="btn btn-sm" onclick="saveKw()">&#128190; Salvar palavras-chave</button>
-     <span id="douSaved" class="s" style="color:var(--green,#13a36b)"></span>
-   </div></div>`;
- return ph('Busca DOU ao vivo','Consulta em tempo real ao Diario Oficial da Uniao. As palavras-chave ficam salvas neste navegador.')
-  + card('Parametros da busca',form)
-  + `<div class="mt" id="douResults"><div class="muted center" style="padding:30px">Defina as palavras-chave e clique em <b>Buscar agora</b>.</div></div>`;
-}
-function initDOU(){ const i=document.getElementById('douKw'); if(i){i.value=getKw();} }
-function saveKw(){
- const kw=document.getElementById('douKw').value.trim();
- const sec=document.getElementById('douSec').value;
- localStorage.setItem(DOU_KW_KEY,kw); localStorage.setItem(DOU_SECAO_KEY,sec);
- const s=document.getElementById('douSaved'); if(s){s.textContent='\u2714 salvo'; setTimeout(()=>s.textContent='',2000);}
-}
-async function runDOU(){
- saveKw();
- const box=document.getElementById('douResults');
- const kws=document.getElementById('douKw').value.split(',').map(x=>x.trim()).filter(Boolean);
- const sec=document.getElementById('douSec').value;
- if(!kws.length){box.innerHTML='<div class="muted center" style="padding:24px">Informe ao menos uma palavra-chave.</div>';return;}
- box.innerHTML='<div class="muted center" style="padding:30px">&#9203; Consultando o DOU...</div>';
- try{
-  const r=await fetch('/api/dou/buscar',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({keywords:kws,secao:sec,dias:7})});
-  const raw=await r.text(); let data;
-  try{ data=JSON.parse(raw); }
-  catch(_){ box.innerHTML='<div class="muted center" style="padding:24px;color:var(--red,#d33)"><b>Backend indisponivel.</b><br>Abra esta pagina pela URL do Render (onrender.com), nao pela previa estatica.</div>'; return; }
-  if(!data.ok){ box.innerHTML='<div class="muted center" style="padding:24px;color:var(--red,#d33)">'+(data.error||'Erro na busca')+'</div>'; return; }
-  const cards=data.resultados.map(it=>{
-    const ok=it.encontrou;
-    return `<div class="op" style="border-left:4px solid ${ok?'var(--green,#13a36b)':'var(--orange,#e8801f)'};padding:14px;margin-bottom:10px;border:1px solid #eef0f5;border-radius:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <b>${E(it.termo)}</b>
-        <span class="s" style="color:${ok?'var(--green,#13a36b)':'var(--orange,#e8801f)'}">${ok?'\u2714 encontrado':'sem correspondencia direta'}</span>
-      </div>
-      <div class="s muted">HTTP ${it.status} &middot; ${it.tamanho||0} bytes</div>
-      <a class="btn btn-sm mt" href="${it.fonte}" target="_blank">Abrir pesquisa no DOU \u2197</a>
-    </div>`;}).join('');
-  const avisos=(data.avisos&&data.avisos.length)?`<div class="muted s mt" style="padding:10px;background:#fff7ed;border-radius:8px"><b>Avisos:</b><br>${data.avisos.join('<br>')}</div>`:'';
-  box.innerHTML=card(`Resultados &middot; ${data.consulta.periodo.join(' a ')}`, cards+avisos+`<div class="muted s mt">${E(data.nota||'')}</div>`);
- }catch(e){ box.innerHTML='<div class="muted center" style="padding:24px;color:var(--red,#d33)">Erro de rede: '+e+'</div>'; }
-}
-
 function go(route){location.hash=route;}
 function filterOps(el,cat){
  document.querySelectorAll('.filters .fc').forEach(x=>x.classList.remove('on'));el.classList.add('on');

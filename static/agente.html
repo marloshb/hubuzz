@@ -1,0 +1,27 @@
+<!DOCTYPE html><html lang="pt-BR"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agente DOU</title><style>
+body{font-family:system-ui,Arial,sans-serif;max-width:780px;margin:40px auto;padding:0 16px;color:#1f2937}
+input,button{font-size:1rem;padding:11px 13px;border-radius:8px;border:1px solid #cbd5e1}
+button{background:#4f46e5;color:#fff;border:0;cursor:pointer;font-weight:600}button:disabled{opacity:.6}
+.card{border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-top:10px}
+.ok{border-left:4px solid #16a34a}.warn{border-left:4px solid #f59e0b}.err{border-left:4px solid #dc2626}
+a{color:#4f46e5}small{color:#64748b}</style></head><body>
+<h1>Agente DOU</h1><p>Busca publicacoes no Diario Oficial da Uniao por palavras-chave.</p>
+<input id="kw" placeholder="ex.: geoprocessamento, edital" style="width:100%">
+<div style="margin:12px 0"><button id="btn" onclick="buscar()">Buscar no DOU</button></div>
+<div id="out"></div><script>
+async function buscar(){const btn=document.getElementById('btn'),out=document.getElementById('out');
+const kws=document.getElementById('kw').value.split(',').map(s=>s.trim()).filter(Boolean);
+if(!kws.length){out.innerHTML='<div class="card warn">Digite ao menos uma palavra-chave.</div>';return;}
+btn.disabled=true;btn.textContent='Buscando...';out.innerHTML='<div class="card">Consultando...</div>';
+try{const r=await fetch('/api/dou/buscar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keywords:kws,secao:'do3'})});
+const raw=await r.text();let d;try{d=JSON.parse(raw);}catch(_){out.innerHTML='<div class="card err"><b>Backend offline.</b><br><small>Abra pela URL do Render (onrender.com).</small></div>';return;}
+if(!d.ok){out.innerHTML='<div class="card warn">'+(d.error||'Erro')+'</div>';return;}
+let h='<div class="card ok"><b>'+d.consulta.data+'</b> &middot; '+d.consulta.materias_varridas+' materias varridas</div>';
+d.resultados.forEach(it=>{const cls=it.encontrou?'ok':'card';
+h+='<div class="card '+cls+'"><b>'+it.termo+'</b> &middot; '+it.total+' ocorrencia(s)';
+(it.materias||[]).slice(0,5).forEach(m=>{h+='<br><a href="'+m.link+'" target="_blank">'+(m.titulo||'(sem titulo)')+'</a> <small>'+(m.orgao||'')+'</small>';});
+h+='</div>';});
+out.innerHTML=h;}catch(e){out.innerHTML='<div class="card err">Erro: '+e+'</div>';}finally{btn.disabled=false;btn.textContent='Buscar no DOU';}}
+</script></body></html>
