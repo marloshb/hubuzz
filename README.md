@@ -1,9 +1,9 @@
-# Hubuzz - Busca DOU por periodo
+# Hubuzz
 
-Aba 'Busca DOU' com **campo de range de datas** (De / Ate) e atalhos (Hoje, 7, 15, 30 dias).
-O backend varre `/leiturajornal` dia a dia no intervalo, pula fim de semana e edicoes vazias, e soma as ocorrencias reais por palavra-chave.
+Painel completo + Busca DOU ao vivo (endpoint real /leiturajornal).
+A busca varre todas as materias da secao no dia e popula o modulo Oportunidades.
 
-## Deploy (Render)
-- Build: `pip install -r requirements.txt`
-- Start: `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180 --workers 2`
-- index.html e agente.html ficam em `static/`.
+## Rotas
+  /                Painel
+  /api/health      healthcheck
+  /api/dou/buscar  busca real no DOU

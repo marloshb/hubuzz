@@ -6,6 +6,4 @@ venv/
 *.tmp
 *.zip
 _stage.json
-_chk.py
-_css.tmp
 .DS_Store
