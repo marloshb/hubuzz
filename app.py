@@ -1,8 +1,9 @@
-"""Hubuzz - Backend Flask. Busca REAL no DOU via endpoint /leiturajornal (JSON)."""
+"""Hubuzz - Backend Flask. Busca REAL no DOU varrendo /leiturajornal por intervalo de datas."""
 import os
 import re
 import json
 import time
+import unicodedata
 import datetime as dt
 import logging
 import traceback
@@ -19,15 +20,24 @@ CORS(app)
 
 DOU_URL = "https://www.in.gov.br/leiturajornal"
 TIMEOUT = 45
-RETRIES = 3
+MAX_DIAS_RANGE = 45          # teto de seguranca do intervalo
 USER_AGENTS = [
     ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
     ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
      "(KHTML, like Gecko) Version/17.4 Safari/605.1.15"),
-    ("Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"),
 ]
 PARAMS_RE = re.compile(r'id="params"[^>]*>(.*?)</script>', re.S)
+
+
+def _norm(s):
+    s = unicodedata.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.lower()
+
+
+def _parse_iso(value):
+    return dt.datetime.strptime(value, "%Y-%m-%d").date()
 
 
 @app.get("/")
@@ -45,39 +55,47 @@ def health():
     return jsonify(status="ok", time=dt.datetime.utcnow().isoformat() + "Z")
 
 
-def _fetch_articles(secao, data):
-    last_err = None
-    for attempt in range(RETRIES):
-        headers = {
-            "User-Agent": USER_AGENTS[attempt % len(USER_AGENTS)],
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "pt-BR,pt;q=0.9",
-        }
-        params = {"data": data, "secao": secao}
+def _fetch_one(data_ddmmyyyy, secao):
+    """Baixa uma edicao e retorna (lista_de_artigos, url). Lista vazia se nao houver."""
+    last = "sem resposta"
+    for ua in USER_AGENTS:
+        headers = {"User-Agent": ua, "Accept": "text/html",
+                   "Accept-Language": "pt-BR,pt;q=0.9"}
         try:
-            resp = requests.get(DOU_URL, params=params, headers=headers, timeout=TIMEOUT)
+            resp = requests.get(DOU_URL, params={"data": data_ddmmyyyy, "secao": secao},
+                                headers=headers, timeout=TIMEOUT)
             if resp.status_code == 200:
                 m = PARAMS_RE.search(resp.text or "")
-                if not m:
-                    last_err = "bloco de dados (#params) nao encontrado"
-                else:
-                    arr = json.loads(m.group(1).strip()).get("jsonArray", [])
-                    return arr, resp.url, None
-            else:
-                last_err = "HTTP %s" % resp.status_code
+                if m:
+                    return json.loads(m.group(1).strip()).get("jsonArray", []), resp.url
+                return [], resp.url
+            last = "HTTP %s" % resp.status_code
         except requests.RequestException as exc:
-            last_err = exc.__class__.__name__
-        if attempt < RETRIES - 1:
-            time.sleep(1.2 * (attempt + 1))
-    return [], DOU_URL, last_err
+            last = exc.__class__.__name__
+        time.sleep(0.5)
+    logger.warning("Falha ao buscar %s: %s", data_ddmmyyyy, last)
+    return [], DOU_URL
 
 
-def _match(article, termo):
-    blob = " ".join([
+def _match(article, termo_norm):
+    blob = _norm(" ".join([
         str(article.get("title", "")), str(article.get("subTitulo", "")),
         str(article.get("content", "")), str(article.get("hierarchyStr", "")),
-    ]).lower()
-    return termo.lower() in blob
+    ]))
+    return termo_norm in blob
+
+
+def _materia(article, fallback_url):
+    ut = article.get("urlTitle", "")
+    return {
+        "titulo": article.get("title", "") or article.get("titulo", ""),
+        "orgao": article.get("hierarchyStr", ""),
+        "tipo": article.get("artType", ""),
+        "pagina": article.get("numberPage", ""),
+        "data_pub": article.get("pubDate", ""),
+        "trecho": (article.get("content", "") or "")[:300],
+        "link": ("https://www.in.gov.br/web/dou/-/" + ut) if ut else fallback_url,
+    }
 
 
 @app.post("/api/dou/buscar")
@@ -89,39 +107,67 @@ def buscar_dou():
             return jsonify(ok=False, error="Informe ao menos uma palavra-chave."), 400
 
         secao = payload.get("secao", "do3")
-        data = payload.get("data") or dt.date.today().strftime("%d-%m-%Y")
 
-        artigos, url, erro = _fetch_articles(secao, data)
-        if erro and not artigos:
+        # ----- resolve o intervalo de datas -----
+        hoje = dt.date.today()
+        try:
+            d_to = _parse_iso(payload["date_to"]) if payload.get("date_to") else hoje
+            d_from = _parse_iso(payload["date_from"]) if payload.get("date_from") else d_to
+        except (ValueError, KeyError):
+            return jsonify(ok=False, error="Datas invalidas (use AAAA-MM-DD)."), 400
+
+        if d_from > d_to:
+            d_from, d_to = d_to, d_from
+        if (d_to - d_from).days > MAX_DIAS_RANGE:
             return jsonify(ok=False,
-                           error="DOU indisponivel no momento (%s). Tente novamente." % erro,
-                           consulta={"secao": secao, "data": data, "fonte": url}), 200
+                           error="Intervalo muito grande (max %s dias)." % MAX_DIAS_RANGE), 400
 
-        resultados = []
-        for termo in keywords:
-            hits = []
-            for a in artigos:
-                if _match(a, termo):
-                    ut = a.get("urlTitle", "")
-                    hits.append({
-                        "titulo": a.get("title", "") or a.get("titulo", ""),
-                        "orgao": a.get("hierarchyStr", ""),
-                        "tipo": a.get("artType", ""),
-                        "pagina": a.get("numberPage", ""),
-                        "data_pub": a.get("pubDate", ""),
-                        "trecho": (a.get("content", "") or "")[:300],
-                        "link": ("https://www.in.gov.br/web/dou/-/" + ut) if ut else url,
-                    })
-            resultados.append({"termo": termo, "encontrou": len(hits) > 0,
-                               "total": len(hits), "materias": hits[:20]})
+        # ----- varre cada dia util do intervalo -----
+        knorm = {k: _norm(k) for k in keywords}
+        agg = {k: [] for k in keywords}
+        total_materias = 0
+        dias_uteis = 0
+        dias_pulados = []
+        fonte = DOU_URL
+
+        cur = d_from
+        while cur <= d_to:
+            if cur.weekday() >= 5:          # sabado/domingo
+                cur += dt.timedelta(days=1)
+                continue
+            ddmm = cur.strftime("%d-%m-%Y")
+            artigos, url = _fetch_one(ddmm, secao)
+            fonte = url
+            if not artigos:
+                dias_pulados.append(cur.isoformat())
+            else:
+                dias_uteis += 1
+                total_materias += len(artigos)
+                for a in artigos:
+                    for k in keywords:
+                        if _match(a, knorm[k]):
+                            agg[k].append(_materia(a, url))
+            cur += dt.timedelta(days=1)
+
+        resultados = [{
+            "termo": k,
+            "encontrou": len(agg[k]) > 0,
+            "total": len(agg[k]),
+            "materias": agg[k][:40],
+        } for k in keywords]
 
         return jsonify(
             ok=True,
-            consulta={"keywords": keywords, "secao": secao, "data": data,
-                      "fonte": url, "materias_varridas": len(artigos)},
+            consulta={
+                "keywords": keywords, "secao": secao,
+                "date_from": d_from.isoformat(), "date_to": d_to.isoformat(),
+                "dias_uteis": dias_uteis, "dias_pulados": dias_pulados,
+                "materias_varridas": total_materias, "fonte": fonte,
+            },
             resultados=resultados,
-            nota=("Consulta real ao DOU via endpoint /leiturajornal (JSON). "
-                  "Varre todas as materias da secao na data e conta ocorrencias reais."),
+            nota=("Consulta real ao DOU (/leiturajornal). Varre cada dia util do intervalo, "
+                  "soma as ocorrencias reais e ignora acentos/maiusculas. Fins de semana e "
+                  "edicoes inexistentes sao pulados automaticamente."),
         )
     except Exception:
         logger.error("Erro inesperado:\n%s", traceback.format_exc())
@@ -133,11 +179,6 @@ def nf(e):
     if request.path.startswith("/api/"):
         return jsonify(ok=False, error="Rota nao encontrada."), 404
     return e
-
-
-@app.errorhandler(500)
-def ie(e):
-    return jsonify(ok=False, error="Erro interno do servidor."), 500
 
 
 if __name__ == "__main__":
