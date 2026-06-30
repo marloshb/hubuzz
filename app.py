@@ -1,14 +1,19 @@
 from __future__ import annotations
 
-"""Hubuzz - backend Flask. Serve o painel e a API de busca REAL no DOU.
+"""Hubuzz - Backend Flask. Painel + busca REAL no DOU (/leiturajornal, JSON).
 
-Rotas:
-  GET  /                 -> static/index.html (painel SPA)
-  GET  /api/health       -> healthcheck JSON
-  POST /api/dou/buscar   -> busca por palavras-chave em um INTERVALO de datas
+Contrato 100% compativel com o index.html atual:
+  POST /api/dou/buscar
+    body: {keywords:[...], secao:"do3", date_from:"YYYY-MM-DD", date_to:"YYYY-MM-DD"}
+    ->  {ok, consulta:{keywords, secao, date_from, date_to, dias_uteis,
+                       dias_pulados, materias_varridas, fonte},
+         resultados:[{termo, encontrou, total, materias:[{titulo, data_pub,
+                       orgao, pagina, edicao, tipo_ato, trecho, link}]}],
+         oportunidades:[...formato do painel OPS...],
+         nota}
 
-Robustez contra 502/anti-bot do in.gov.br: Retry/backoff + rotacao de User-Agent
-+ warm-up na home. Endpoint estavel: /leiturajornal (JSON embutido).
+Robustez contra 502/anti-bot do in.gov.br:
+  - Retry/backoff exponencial + rotacao de User-Agent + warm-up na home.
 """
 
 import os
@@ -18,6 +23,7 @@ import html
 import time
 import random
 import logging
+import hashlib
 import unicodedata
 import datetime as dt
 from typing import Any
@@ -36,24 +42,31 @@ CORS(app)
 
 DOU_BASE = "https://www.in.gov.br"
 LEITURA_URL = DOU_BASE + "/leiturajornal"
-TIMEOUT = int(os.environ.get("DOU_TIMEOUT", "50"))
-MAX_DIAS_RANGE = int(os.environ.get("DOU_MAX_DIAS", "31"))
-MAX_MATERIAS_POR_TERMO = int(os.environ.get("DOU_MAX_MATERIAS", "40"))
-DOU_PROXY = os.environ.get("DOU_PROXY", "").strip()
-
+TIMEOUT = 50
+MAX_DIAS_RANGE = 31
+MAX_MATERIAS_POR_TERMO = 40
 PARAMS_RE = re.compile(r'id=["\']params["\'][^>]*>(.*?)</script>', re.S | re.I)
 TAG_RE = re.compile(r"<[^>]+>")
 
+# Rotulos legiveis das secoes para o painel
+SECAO_LABEL = {"do1": "DOU Secao 1", "do2": "DOU Secao 2", "do3": "DOU Secao 3"}
+
 UAS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
+    ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+     "(KHTML, like Gecko) Version/17.5 Safari/605.1.15"),
+    ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"),
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
 ]
 
-_cache: dict = {}
+_cache: dict[str, list[dict[str, Any]]] = {}
 
 
+# --------------------------------------------------------------------------- #
+# Utilitarios
+# --------------------------------------------------------------------------- #
 def _norm(text: str) -> str:
     t = unicodedata.normalize("NFKD", str(text or ""))
     return "".join(c for c in t if not unicodedata.combining(c)).lower()
@@ -63,7 +76,7 @@ def _strip(text: str) -> str:
     return re.sub(r"\s+", " ", TAG_RE.sub(" ", str(text or ""))).strip()
 
 
-def _field(item: dict, *names: str) -> Any:
+def _field(item: dict[str, Any], *names: str) -> Any:
     for n in names:
         v = item.get(n)
         if v not in (None, ""):
@@ -87,23 +100,24 @@ def _build_session(ua: str) -> requests.Session:
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
     })
-    if DOU_PROXY:
-        s.proxies.update({"http": DOU_PROXY, "https": DOU_PROXY})
     return s
 
 
-def _fetch_one(ddmm: str, secao: str):
-    chave = secao + "|" + ddmm
+def _fetch_one(ddmm: str, secao: str) -> tuple[list[dict[str, Any]], str]:
+    """Baixa e parseia as materias de um dia (cache em memoria por dia/secao)."""
+    chave = f"{secao}|{ddmm}"
     if chave in _cache:
         return _cache[chave], LEITURA_URL
+
     final_url = LEITURA_URL
     for ua in random.sample(UAS, len(UAS)):
         s = _build_session(ua)
         try:
-            s.get(DOU_BASE + "/", timeout=TIMEOUT)
+            s.get(DOU_BASE + "/", timeout=TIMEOUT)          # warm-up
             time.sleep(random.uniform(0.3, 0.8))
             s.headers["Referer"] = DOU_BASE + "/"
-            resp = s.get(LEITURA_URL, params={"data": ddmm, "secao": secao}, timeout=TIMEOUT)
+            resp = s.get(LEITURA_URL, params={"data": ddmm, "secao": secao},
+                         timeout=TIMEOUT)
             final_url = resp.url
             if resp.status_code != 200:
                 time.sleep(random.uniform(0.8, 1.6))
@@ -123,7 +137,7 @@ def _fetch_one(ddmm: str, secao: str):
     return [], final_url
 
 
-def _match(item: dict, termo_norm: str) -> bool:
+def _match(item: dict[str, Any], termo_norm: str) -> bool:
     blob = _norm(" ".join([
         _strip(_field(item, "title", "titulo")),
         _strip(_field(item, "subTitulo", "subtitle", "subtitulo")),
@@ -133,9 +147,9 @@ def _match(item: dict, termo_norm: str) -> bool:
     return termo_norm in blob
 
 
-def _materia(item: dict, url: str) -> dict:
+def _materia(item: dict[str, Any], url: str) -> dict[str, Any]:
     ut = item.get("urlTitle") or item.get("url_title") or ""
-    link = DOU_BASE + "/web/dou/-/" + ut if ut else (item.get("url") or url)
+    link = f"{DOU_BASE}/web/dou/-/{ut}" if ut else (item.get("url") or url)
     content = _strip(_field(item, "content", "conteudo"))
     return {
         "titulo": _strip(_field(item, "title", "titulo")) or "(sem titulo)",
@@ -149,57 +163,125 @@ def _materia(item: dict, url: str) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Mapeamento para o formato do painel "Oportunidades" (OPS)
+# --------------------------------------------------------------------------- #
+def _score(materia: dict[str, Any], termo: str) -> int:
+    """Heuristica simples de aderencia (0-100) para priorizar no painel."""
+    base = 60
+    blob = _norm(materia["titulo"] + " " + materia["trecho"])
+    if _norm(termo) in _norm(materia["titulo"]):
+        base += 18                                   # termo no titulo pesa mais
+    for forte in ("edital", "licitacao", "pregao", "chamada", "concorrencia",
+                  "fomento", "selecao", "credenciamento"):
+        if forte in blob:
+            base += 6
+            break
+    return max(0, min(100, base))
+
+
+def _urgencia(data_pub: str) -> int:
+    """Quanto mais recente a publicacao, maior a urgencia exibida."""
+    try:
+        d = dt.datetime.strptime(str(data_pub)[:10], "%d/%m/%Y").date()
+    except ValueError:
+        return 50
+    dias = (dt.date.today() - d).days
+    return max(20, min(95, 95 - dias * 3))
+
+
+def _tags(sc: int, tipo_ato: str) -> list[list[str]]:
+    tags: list[list[str]] = []
+    if sc >= 80:
+        tags.append(["Alta aderencia", "b-green"])
+    else:
+        tags.append(["Aderencia media", "b-gray"])
+    if tipo_ato:
+        tags.append([tipo_ato[:24], "b-blue"])
+    tags.append(["DOU", "b-gray"])
+    return tags
+
+
+def _oportunidade(materia: dict[str, Any], termo: str, secao: str) -> dict[str, Any]:
+    """Converte uma materia do DOU no objeto que o painel OPS consome."""
+    sc = _score(materia, termo)
+    origem = SECAO_LABEL.get(secao, "DOU")
+    seed = (materia["titulo"] + materia["data_pub"]).encode("utf-8")
+    oid = "DOU-" + hashlib.md5(seed).hexdigest()[:6].upper()
+    return {
+        "id": oid,
+        "t": materia["titulo"],
+        "or": origem,                       # origem (fonte)
+        "ins": materia["orgao"] or origem,  # instituicao publicadora
+        "te": termo,                        # tema = palavra-chave que casou
+        "rg": "Brasil",                     # geografia
+        "vl": "A confirmar",                # valor
+        "pz": materia["data_pub"] or "-",   # prazo/publicacao
+        "rp": "Triagem automatica",         # responsavel sugerido
+        "sc": sc,                           # score de aderencia
+        "ur": _urgencia(materia["data_pub"]),
+        "rs": materia["trecho"] or materia["titulo"],
+        "tags": _tags(sc, materia["tipo_ato"]),
+        "link": materia["link"],
+        "pagina": materia["pagina"],
+        "edicao": materia["edicao"],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Rotas
+# --------------------------------------------------------------------------- #
 @app.get("/")
-def hub():
+def hub() -> Any:
     return send_from_directory(app.static_folder, "index.html")
 
 
 @app.get("/api/health")
-def health():
-    return jsonify(status="ok", proxy=bool(DOU_PROXY),
-                   time=dt.datetime.utcnow().isoformat() + "Z")
+def health() -> Any:
+    return jsonify(status="ok", time=dt.datetime.utcnow().isoformat() + "Z")
 
 
 @app.post("/api/dou/buscar")
-def buscar_dou():
+def buscar_dou() -> Any:
+    """Varre cada dia util do intervalo e conta ocorrencias reais por termo."""
     try:
         body = request.get_json(silent=True) or {}
         keywords = [k.strip() for k in body.get("keywords", []) if str(k).strip()]
         if not keywords:
             return jsonify(ok=False, error="Informe ao menos uma palavra-chave."), 400
 
-        secao = (body.get("secao") or "do3").lower()
+        secao = body.get("secao", "do3")
         hoje = dt.date.today()
 
         def _parse(v, default):
             if not v:
                 return default
-            s = str(v).strip()
-            for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
-                try:
-                    return dt.datetime.strptime(s[:10], fmt).date()
-                except ValueError:
-                    continue
-            return default
+            try:
+                return dt.date.fromisoformat(str(v)[:10])
+            except ValueError:
+                return default
 
-        d_from = _parse(body.get("date_from") or body.get("data"), hoje)
-        d_to = _parse(body.get("date_to") or body.get("data"), hoje)
+        d_from = _parse(body.get("date_from"), hoje)
+        d_to = _parse(body.get("date_to"), hoje)
         if d_from > d_to:
             d_from, d_to = d_to, d_from
         if (d_to - d_from).days > MAX_DIAS_RANGE:
-            return jsonify(ok=False,
-                           error="Intervalo muito grande (max %d dias)." % MAX_DIAS_RANGE), 400
+            return jsonify(
+                ok=False,
+                error=f"Intervalo muito grande (max {MAX_DIAS_RANGE} dias)."), 400
 
         knorm = {k: _norm(k) for k in keywords}
-        agg = {k: [] for k in keywords}
+        agg: dict[str, list] = {k: [] for k in keywords}
+        oportunidades: list[dict[str, Any]] = []
+        vistos: set[str] = set()
         total_materias = 0
         dias_uteis = 0
-        dias_pulados = []
+        dias_pulados: list[str] = []
         fonte = LEITURA_URL
 
         cur = d_from
         while cur <= d_to:
-            if cur.weekday() >= 5:
+            if cur.weekday() >= 5:                     # sabado/domingo
                 cur += dt.timedelta(days=1)
                 continue
             artigos, url = _fetch_one(cur.strftime("%d-%m-%Y"), secao)
@@ -212,7 +294,12 @@ def buscar_dou():
                 for a in artigos:
                     for k in keywords:
                         if _match(a, knorm[k]):
-                            agg[k].append(_materia(a, url))
+                            mat = _materia(a, url)
+                            agg[k].append(mat)
+                            op = _oportunidade(mat, k, secao)
+                            if op["id"] not in vistos:   # dedup por id estavel
+                                vistos.add(op["id"])
+                                oportunidades.append(op)
             cur += dt.timedelta(days=1)
 
         resultados = [{
@@ -221,6 +308,8 @@ def buscar_dou():
             "total": len(agg[k]),
             "materias": agg[k][:MAX_MATERIAS_POR_TERMO],
         } for k in keywords]
+
+        oportunidades.sort(key=lambda o: (o["sc"], o["ur"]), reverse=True)
 
         return jsonify(
             ok=True,
@@ -231,13 +320,15 @@ def buscar_dou():
                 "materias_varridas": total_materias, "fonte": fonte,
             },
             resultados=resultados,
-            nota=("Consulta real ao DOU (/leiturajornal, JSON). Varre cada dia util do "
-                  "intervalo na secao e conta ocorrencias reais (titulo, subtitulo, "
-                  "conteudo e orgao), com retry e rotacao de User-Agent contra 502."),
+            oportunidades=oportunidades,
+            nota=("Consulta real ao DOU (/leiturajornal, JSON). Varre cada dia util "
+                  "do intervalo na secao e conta ocorrencias reais (titulo, subtitulo, "
+                  "conteudo e orgao), com retry e rotacao de User-Agent contra 502. "
+                  "O campo 'oportunidades' ja vem no formato do painel."),
         )
     except Exception as exc:
         logger.exception("Erro inesperado na busca DOU")
-        return jsonify(ok=False, error="Erro interno: %s." % exc.__class__.__name__), 500
+        return jsonify(ok=False, error=f"Erro interno: {exc.__class__.__name__}."), 500
 
 
 @app.errorhandler(404)
@@ -248,4 +339,4 @@ def nf(e):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "10000")))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
