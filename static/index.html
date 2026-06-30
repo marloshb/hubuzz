@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="pt-BR"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- saved from url=(0607)https://storage.googleapis.com/tess-files-prod/workspaces/1347291/chats/20055140/workspace/index_final.html?GoogleAccessId=app-tess-ai-platform-v2-prod%40pareto-tech-prod.iam.gserviceaccount.com&Expires=1782864829&Signature=h2JHh3wuCMhRk%2F%2Bspps0xsioHACk%2B%2F9t98WCgeqjykyf1koCYG%2FVwZ8AW3rsOU0F5H%2BWwtA49y5Vx0AqOETpVZXAP%2F%2FKPMcjgBMKwGFcBb4GuDPS40OkmgrEDwF1iHiH%2F2CIVyVoziB%2Bi4XKVElflaqPnqqzgcMzkibOJ1B9BjHZ9lDIrjGEVQ9dEnGKzBqHtRkBbxH6y0vRgWuawQ%2Bz0cC86gnzX1MS5ZDGnDPka2gl2EH8A8YsnXw6AvhxOcvqHoukm9ePMYFQ2Ja%2Bt1QA0wE91Om%2Bb6OfTjeUgNDYlKbp12T5uJ1EIlHHIQVWtWoQNW3UKWtOLeuQwecw6sTsoQ%3D%3D#keywords -->
+<html lang="pt-BR"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Hub de Oportunidades Institucionais</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com/">
+<link href="./index_files/css2" rel="stylesheet">
+<script src="./index_files/chart.umd.min.js.download"></script>
 <style>:root{--canvas:#f4f6fb;--surface:#fff;--surface2:#f8fafc;--line:#e6eaf2;--line2:#eef1f7;--ink:#0f1b34;--ink2:#46546f;--ink3:#8a96ac;--primary:#1b3a8f;--primary2:#2f5bd6;--psoft:#eaf0ff;--green:#13a36b;--gsoft:#e3f7ee;--orange:#e8801f;--osoft:#fdeede;--purple:#7c4dd0;--pusoft:#f0e9fb;--red:#dc3a4b;--rsoft:#fde6e8;--cyan:#0fa3b1;--csoft:#e0f6f8;--radius:14px;--sh-sm:0 1px 3px rgba(15,27,52,.07);--sh:0 6px 22px rgba(15,27,52,.08);--sh-lg:0 18px 50px rgba(15,27,52,.16);--sb:264px;--tb:66px;font-family:'Inter',system-ui,Segoe UI,sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}body{background:var(--canvas);color:var(--ink);font-size:14px;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}button{font-family:inherit;cursor:pointer}::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#d4dae6;border-radius:20px;border:3px solid var(--canvas)}
@@ -86,21 +87,47 @@ a{color:inherit;text-decoration:none}button{font-family:inherit;cursor:pointer}:
 .opp{cursor:pointer}
 .fc{cursor:pointer}
 </style>
-</head>
+<meta id="acfifjfajpekbmhmjppnmmjgmhjkildl"><meta id="dcngeagmmhegagicpcmpinaoklddcgon"></head>
 <body><div class="shell">
  <aside class="sidebar" id="sidebar">
   <div class="brand"><div class="mk">HO</div><div><b>Hub de Oportunidades</b><span>Inteligencia Institucional</span></div></div>
-  <nav class="nav" id="nav"></nav>
-  <div class="sbf"><div class="pulse"><span class="dot d-live"></span><div><b>Pipeline de IA ativo</b><span>8 agentes &middot; 1.284 itens/dia</span></div></div></div>
+  <nav class="nav" id="nav"><div class="grp">Visao Geral</div><a class="" onclick="go(&#39;dashboard&#39;)"><span class="ic">📊</span>Painel Executivo</a><a class="" onclick="go(&#39;oportunidades&#39;)"><span class="ic">📋</span>Oportunidades<span class="tag">8</span></a><a class="" onclick="go(&#39;pipeline&#39;)"><span class="ic">🔀</span>Workflow / Kanban</a><div class="grp">Inteligencia de IA</div><a class="" onclick="go(&#39;agentes&#39;)"><span class="ic">🤖</span>Agentes de IA<span class="tag">8</span></a><a class="" onclick="go(&#39;orquestracao&#39;)"><span class="ic">⚙</span>Orquestracao</a><a class="on" onclick="go(&#39;keywords&#39;)"><span class="ic">🔍</span>Busca DOU periodo<span class="tag">novo</span></a><a class="" onclick="go(&#39;fontes&#39;)"><span class="ic">📡</span>Fontes de Dados</a><div class="grp">Gestao</div><a class="" onclick="go(&#39;analytics&#39;)"><span class="ic">📈</span>Analytics</a><a class="" onclick="go(&#39;config&#39;)"><span class="ic">🔧</span>Configuracoes</a><div class="grp">Tempo real</div><a class="" onclick="go(&#39;dou&#39;)"><span class="ic">🔎</span>Busca DOU ao vivo<span class="tag">LIVE</span></a></nav>
+  <div class="sbf"><div class="pulse"><span class="dot d-live"></span><div><b>Pipeline de IA ativo</b><span>8 agentes · 1.284 itens/dia</span></div></div></div>
  </aside>
  <div class="main">
   <header class="topbar">
-   <button class="ib" id="mt" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button>
-   <div class="search"><span class="si">&#128269;</span><input placeholder="Buscar oportunidades, editais, instituicoes..."></div>
-   <div class="tba"><button class="ib">&#9881;</button><button class="ib">&#128276;<span class="bdot">3</span></button>
+   <button class="ib" id="mt" onclick="document.getElementById(&#39;sidebar&#39;).classList.toggle(&#39;open&#39;)">☰</button>
+   <div class="search"><span class="si">🔍</span><input placeholder="Buscar oportunidades, editais, instituicoes..."></div>
+   <div class="tba"><button class="ib">⚙</button><button class="ib">🔔<span class="bdot">3</span></button>
     <div class="uc"><div class="av">MR</div><div><b>Marina Rocha</b><span>Gerente Institucional</span></div></div></div>
   </header>
-  <main class="view" id="view"></main>
+  <main class="view" id="view"><div class="ph"><div><h1>Busca DOU por periodo</h1><p>Consulta real ao Diario Oficial da Uniao (leiturajornal). Varre cada dia util do intervalo e soma as ocorrencias por palavra-chave.</p></div><div class="sp"></div></div><div class="grid g4">
+  <div class="kpi" style="--ac:#2f5bd6;--so:#eaf0ff"><div class="ki">🔑</div><div class="kv">6</div><div class="kl">Palavras-chave ativas</div></div>
+  <div class="kpi" style="--ac:#0fa3b1;--so:#e0f6f8"><div class="ki">📅</div><div class="kv">Range</div><div class="kl">Busca por periodo de datas</div></div>
+  <div class="kpi" style="--ac:#7c4dd0;--so:#f0e9fb"><div class="ki">🤖</div><div class="kv">DOU</div><div class="kl">Consulta real (leiturajornal)</div></div>
+  <div class="kpi" style="--ac:#13a36b;--so:#e3f7ee"><div class="ki">🔍</div><div class="kv">JSON</div><div class="kl">Conta ocorrencias reais</div></div></div><div class="mt"><div class="card"><div class="ch"><h3>Parametros da busca</h3><div class="sp"></div></div><div class="cb"><p class="muted" style="margin-bottom:12px">Defina as palavras-chave e o <b>intervalo de datas</b>. O agente varre cada dia util do periodo na secao escolhida.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"><span class="kwchip">geoprocessamento<button title="remover" onclick="kwDel(&#39;geoprocessamento&#39;)">×</button></span><span class="kwchip">mapeamento<button title="remover" onclick="kwDel(&#39;mapeamento&#39;)">×</button></span><span class="kwchip">plataforma<button title="remover" onclick="kwDel(&#39;plataforma&#39;)">×</button></span><span class="kwchip">sensoriamento<button title="remover" onclick="kwDel(&#39;sensoriamento&#39;)">×</button></span><span class="kwchip">imageamento<button title="remover" onclick="kwDel(&#39;imageamento&#39;)">×</button></span><span class="kwchip">sistemas<button title="remover" onclick="kwDel(&#39;sistemas&#39;)">×</button></span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <div><label class="flbl">Nova palavra-chave</label><input id="kwInput" placeholder="ex.: cartografia" style="padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-family:inherit;width:220px" onkeydown="if(event.key===&#39;Enter&#39;)kwAdd()"></div>
+      <button class="btn btn-sm" onclick="kwAdd()" style="height:42px">+ Adicionar</button>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:14px">
+      <div><label class="flbl">Data inicial</label><input type="date" id="kwDe" value="2026-06-23" max="2026-06-30" style="padding:10px;border:1px solid var(--line);border-radius:10px;font-family:inherit"></div>
+      <div><label class="flbl">Data final</label><input type="date" id="kwAte" value="2026-06-30" max="2026-06-30" style="padding:10px;border:1px solid var(--line);border-radius:10px;font-family:inherit"></div>
+      <div><label class="flbl">Secao</label><select id="kwSecao" style="padding:11px;border:1px solid var(--line);border-radius:10px;font-family:inherit">
+        <option value="do1">Secao 1 - Atos normativos</option>
+        <option value="do2">Secao 2 - Pessoal</option>
+        <option value="do3" selected="">Secao 3 - Contratos e editais</option></select></div>
+      <button class="btn btn-p" id="kwRun" onclick="kwBuscar()" style="height:42px">🔎 Buscar no periodo</button>
+      <button class="btn btn-sm" onclick="kwReset()" style="height:42px">Restaurar termos</button>
+    </div>
+    <div class="quickr" style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <span class="muted sm">Atalhos:</span>
+      <button class="btn btn-sm" onclick="kwQuick(0)">Hoje</button>
+      <button class="btn btn-sm" onclick="kwQuick(7)">Ultimos 7 dias</button>
+      <button class="btn btn-sm" onclick="kwQuick(15)">Ultimos 15 dias</button>
+      <button class="btn btn-sm" onclick="kwQuick(30)">Ultimos 30 dias</button>
+    </div></div></div></div><div class="mt"><div class="card"><div class="ch"><h3>Resultados</h3><div class="sp"></div></div><div class="cb"><div id="kwOut"><div class="muted">Defina o periodo e clique em <b>Buscar no periodo</b>.</div></div></div></div></div></main>
  </div>
 </div>
 <script>
