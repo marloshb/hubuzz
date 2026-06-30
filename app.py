@@ -1,212 +1,249 @@
 from __future__ import annotations
 
+"""Hubuzz - Backend Flask. Busca REAL no DOU via /leiturajornal (JSON).
+
+Compativel com o front index.html:
+  POST /api/dou/buscar  body: {keywords[], secao, date_from, date_to}
+  -> {ok, consulta:{...}, resultados:[{termo,encontrou,total,materias[]}], nota}
+
+Robustez contra 502/anti-bot do in.gov.br:
+  - sessao HTTP com Retry/backoff exponencial
+  - rotacao de User-Agent + warm-up na home + Referer
+"""
+
 import os
 import re
 import json
+import html
 import time
 import random
+import logging
 import unicodedata
 import datetime as dt
-from typing import List, Dict, Any, Tuple
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
 
-LEITURA_URL = "https://www.in.gov.br/leiturajornal"
-BASE_URL = "https://www.in.gov.br"
-TIMEOUT = int(os.environ.get("DOU_TIMEOUT", "45"))
-MAX_MATERIAS_POR_TERMO = int(os.environ.get("DOU_MAX_MATERIAS", "50"))
-DOU_PROXY = os.environ.get("DOU_PROXY", "").strip()
-
-_PARAMS_RE = re.compile(r'id=["\']params["\'][^>]*>(.*?)</script>', re.S | re.I)
-_TAG_RE = re.compile(r"<[^>]+>")
-
-_USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-]
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("hubuzz")
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+CORS(app)
+
+DOU_BASE = "https://www.in.gov.br"
+LEITURA_URL = DOU_BASE + "/leiturajornal"
+TIMEOUT = 50
+MAX_DIAS_RANGE = 31
+MAX_MATERIAS_POR_TERMO = 40
+PARAMS_RE = re.compile(r'id=["\']params["\'][^>]*>(.*?)</script>', re.S | re.I)
+TAG_RE = re.compile(r"<[^>]+>")
+
+UAS = [
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
+    ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+     "(KHTML, like Gecko) Version/17.5 Safari/605.1.15"),
+    ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"),
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+]
+
+_cache: dict[str, list[dict[str, Any]]] = {}
 
 
-def _strip(text):
-    return _TAG_RE.sub(" ", text or "").strip()
+def _norm(text: str) -> str:
+    t = unicodedata.normalize("NFKD", str(text or ""))
+    return "".join(c for c in t if not unicodedata.combining(c)).lower()
 
 
-def _norm(text):
-    text = unicodedata.normalize("NFKD", str(text))
-    return "".join(c for c in text if not unicodedata.combining(c)).lower()
+def _strip(text: str) -> str:
+    return re.sub(r"\s+", " ", TAG_RE.sub(" ", str(text or ""))).strip()
 
 
-def _build_session(user_agent):
-    session = requests.Session()
-    retry = Retry(
-        total=4, connect=2, read=2,
-        status_forcelist=(429, 500, 502, 503, 504),
-        backoff_factor=1.5,
-        allowed_methods=frozenset(["GET"]),
-        raise_on_status=False,
-    )
+def _field(item: dict[str, Any], *names: str) -> Any:
+    for n in names:
+        v = item.get(n)
+        if v not in (None, ""):
+            return v
+    return ""
+
+
+def _build_session(ua: str) -> requests.Session:
+    s = requests.Session()
+    retry = Retry(total=4, connect=3, read=3,
+                  status_forcelist=(429, 500, 502, 503, 504),
+                  backoff_factor=1.5, allowed_methods=frozenset(["GET"]),
+                  raise_on_status=False)
     adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    session.headers.update({
-        "User-Agent": user_agent,
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    s.headers.update({
+        "User-Agent": ua,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-        "Referer": LEITURA_URL,
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
     })
-    if DOU_PROXY:
-        session.proxies.update({"http": DOU_PROXY, "https": DOU_PROXY})
-    return session
+    return s
 
 
-def _fetch_jsonarray(secao, data):
-    last = "sem resposta"
-    for ua in random.sample(_USER_AGENTS, len(_USER_AGENTS)):
-        session = _build_session(ua)
+def _fetch_one(ddmm: str, secao: str) -> tuple[list[dict[str, Any]], str]:
+    """Baixa e parseia as materias de um dia (cache em memoria)."""
+    chave = f"{secao}|{ddmm}"
+    if chave in _cache:
+        return _cache[chave], LEITURA_URL
+
+    final_url = LEITURA_URL
+    for ua in random.sample(UAS, len(UAS)):
+        s = _build_session(ua)
         try:
-            session.get(BASE_URL + "/", timeout=TIMEOUT)
-            time.sleep(random.uniform(0.3, 0.7))
-            resp = session.get(LEITURA_URL, params={"data": data, "secao": secao}, timeout=TIMEOUT)
-            if resp.status_code == 200:
-                match = _PARAMS_RE.search(resp.text or "")
-                if match:
-                    try:
-                        payload = json.loads(match.group(1).strip())
-                        return payload.get("jsonArray", []), resp.url, "ok"
-                    except json.JSONDecodeError:
-                        last = "json invalido"
-                        continue
-                return [], resp.url, "vazio"
-            last = "HTTP %d" % resp.status_code
-            if resp.status_code in (429, 500, 502, 503, 504):
+            s.get(DOU_BASE + "/", timeout=TIMEOUT)        # warm-up
+            time.sleep(random.uniform(0.3, 0.8))
+            s.headers["Referer"] = DOU_BASE + "/"
+            resp = s.get(LEITURA_URL, params={"data": ddmm, "secao": secao}, timeout=TIMEOUT)
+            final_url = resp.url
+            if resp.status_code != 200:
                 time.sleep(random.uniform(0.8, 1.6))
                 continue
-        except requests.RequestException as exc:
-            last = exc.__class__.__name__
-            time.sleep(random.uniform(0.5, 1.2))
+            m = PARAMS_RE.search(resp.text or "")
+            if not m:
+                _cache[chave] = []
+                return [], final_url
+            payload = json.loads(html.unescape(m.group(1).strip()))
+            materias = payload.get("jsonArray", []) or []
+            _cache[chave] = materias
+            return materias, final_url
+        except requests.RequestException:
+            time.sleep(random.uniform(0.6, 1.2))
         finally:
-            session.close()
-    status = "bloqueado" if ("HTTP" in last or "json" in last) else "erro"
-    return [], LEITURA_URL, status
+            s.close()
+    return [], final_url
 
 
-def _materia_publica(m):
-    titulo = _strip(m.get("title") or m.get("titulo") or "Sem titulo")
-    url_title = m.get("urlTitle", "")
-    url = ("https://www.in.gov.br/web/dou/-/%s" % url_title) if url_title else LEITURA_URL
-    conteudo = _strip(m.get("content", ""))
+def _match(item: dict[str, Any], termo_norm: str) -> bool:
+    blob = _norm(" ".join([
+        _strip(_field(item, "title", "titulo")),
+        _strip(_field(item, "subTitulo", "subtitle", "subtitulo")),
+        _strip(_field(item, "content", "conteudo")),
+        _strip(_field(item, "hierarchyStr", "hierarquia", "orgao")),
+    ]))
+    return termo_norm in blob
+
+
+def _materia(item: dict[str, Any], url: str) -> dict[str, Any]:
+    ut = item.get("urlTitle") or item.get("url_title") or ""
+    link = f"{DOU_BASE}/web/dou/-/{ut}" if ut else (item.get("url") or url)
+    content = _strip(_field(item, "content", "conteudo"))
     return {
-        "id": str(m.get("classificacao") or m.get("id") or ""),
-        "titulo": titulo,
-        "orgao": _strip(m.get("hierarchyStr", "")),
-        "tipo": _strip(m.get("artType", "")),
-        "pagina": m.get("numberPage", ""),
-        "edicao": m.get("editionNumber", "") or m.get("numero", ""),
-        "data_pub": m.get("pubDate", ""),
-        "trecho": conteudo[:300],
-        "link": url,
+        "titulo": _strip(_field(item, "title", "titulo")) or "(sem titulo)",
+        "orgao": _strip(_field(item, "hierarchyStr", "hierarquia", "orgao")),
+        "tipo_ato": _strip(_field(item, "artType", "tipo", "tipoAto")),
+        "pagina": _field(item, "numberPage", "pagina"),
+        "edicao": _field(item, "editionNumber", "edicao"),
+        "data_pub": _field(item, "pubDate", "dataPublicacao"),
+        "trecho": content[:400],
+        "link": link,
     }
 
 
-def _daterange(d0, d1):
-    cur = d0
-    while cur <= d1:
-        if cur.weekday() < 5:  # dias uteis
-            yield cur
-        cur += dt.timedelta(days=1)
+@app.get("/")
+def hub() -> Any:
+    return send_from_directory(app.static_folder, "index.html")
 
 
-@app.get("/health")
-def health():
-    return jsonify(ok=True, proxy=bool(DOU_PROXY))
+@app.get("/api/health")
+def health() -> Any:
+    return jsonify(status="ok", time=dt.datetime.utcnow().isoformat() + "Z")
 
 
-@app.post("/buscar")
-def buscar():
+@app.post("/api/dou/buscar")
+def buscar_dou() -> Any:
+    """Varre cada dia util do intervalo e conta ocorrencias reais por termo."""
     try:
         body = request.get_json(silent=True) or {}
         keywords = [k.strip() for k in body.get("keywords", []) if str(k).strip()]
         if not keywords:
             return jsonify(ok=False, error="Informe ao menos uma palavra-chave."), 400
 
-        secao = (body.get("secao") or "do3").lower()
+        secao = body.get("secao", "do3")
+        hoje = dt.date.today()
 
-        # Suporta data unica OU intervalo (date_from/date_to em dd-mm-aaaa)
-        date_from = body.get("date_from") or body.get("data")
-        date_to = body.get("date_to") or body.get("data")
-        if not date_from:
-            date_from = date_to = dt.date.today().strftime("%d-%m-%Y")
-        if not date_to:
-            date_to = date_from
+        def _parse(v, default):
+            if not v:
+                return default
+            try:
+                return dt.date.fromisoformat(str(v)[:10])
+            except ValueError:
+                return default
 
-        def parse(s):
-            return dt.datetime.strptime(s, "%d-%m-%Y").date()
+        d_from = _parse(body.get("date_from"), hoje)
+        d_to = _parse(body.get("date_to"), hoje)
+        if d_from > d_to:
+            d_from, d_to = d_to, d_from
+        if (d_to - d_from).days > MAX_DIAS_RANGE:
+            return jsonify(ok=False,
+                           error=f"Intervalo muito grande (max {MAX_DIAS_RANGE} dias)."), 400
 
-        try:
-            d0, d1 = parse(date_from), parse(date_to)
-        except ValueError:
-            return jsonify(ok=False, error="Datas invalidas (use dd-mm-aaaa)."), 400
-        if d1 < d0:
-            d0, d1 = d1, d0
+        knorm = {k: _norm(k) for k in keywords}
+        agg: dict[str, list] = {k: [] for k in keywords}
+        total_materias = 0
+        dias_uteis = 0
+        dias_pulados: list[str] = []
+        fonte = LEITURA_URL
 
-        kn = {k: _norm(k) for k in keywords}
-        agg = {k: [] for k in keywords}
-        dias_com_edicao, dias_sem = 0, []
-
-        for dia in _daterange(d0, d1):
-            ds = dia.strftime("%d-%m-%Y")
-            materias, _url, status = _fetch_jsonarray(secao, ds)
-            if status != "ok" or not materias:
-                dias_sem.append(ds)
+        cur = d_from
+        while cur <= d_to:
+            if cur.weekday() >= 5:                 # sabado/domingo
+                cur += dt.timedelta(days=1)
                 continue
-            dias_com_edicao += 1
-            for m in materias:
-                blob = _norm(" ".join([
-                    str(m.get("title", "")), str(m.get("subTitulo", "")),
-                    str(m.get("content", "")), str(m.get("hierarchyStr", "")),
-                ]))
-                for termo in keywords:
-                    if kn[termo] in blob:
-                        agg[termo].append(m)
+            artigos, url = _fetch_one(cur.strftime("%d-%m-%Y"), secao)
+            fonte = url
+            if not artigos:
+                dias_pulados.append(cur.isoformat())
+            else:
+                dias_uteis += 1
+                total_materias += len(artigos)
+                for a in artigos:
+                    for k in keywords:
+                        if _match(a, knorm[k]):
+                            agg[k].append(_materia(a, url))
+            cur += dt.timedelta(days=1)
 
         resultados = [{
-            "termo": t,
-            "total": len(agg[t]),
-            "encontrou": bool(agg[t]),
-            "materias": [_materia_publica(m) for m in agg[t][:MAX_MATERIAS_POR_TERMO]],
-        } for t in keywords]
+            "termo": k,
+            "encontrou": len(agg[k]) > 0,
+            "total": len(agg[k]),
+            "materias": agg[k][:MAX_MATERIAS_POR_TERMO],
+        } for k in keywords]
 
         return jsonify(
             ok=True,
-            consulta={"secao": secao, "date_from": d0.strftime("%d-%m-%Y"),
-                      "date_to": d1.strftime("%d-%m-%Y"),
-                      "dias_com_edicao": dias_com_edicao, "dias_sem": dias_sem},
+            consulta={
+                "keywords": keywords, "secao": secao,
+                "date_from": d_from.isoformat(), "date_to": d_to.isoformat(),
+                "dias_uteis": dias_uteis, "dias_pulados": dias_pulados,
+                "materias_varridas": total_materias, "fonte": fonte,
+            },
             resultados=resultados,
+            nota=("Consulta real ao DOU (/leiturajornal, JSON). Varre cada dia util do "
+                  "intervalo na secao e conta ocorrencias reais (titulo, subtitulo, "
+                  "conteudo e orgao), com retry e rotacao de User-Agent contra 502."),
         )
     except Exception as exc:
-        return jsonify(ok=False, error="Falha interna: %s" % exc), 500
+        logger.exception("Erro inesperado na busca DOU")
+        return jsonify(ok=False, error=f"Erro interno: {exc.__class__.__name__}."), 500
 
 
-@app.get("/")
-def index():
-    static_dir = app.static_folder or "static"
-    if os.path.exists(os.path.join(static_dir, "index.html")):
-        return send_from_directory(static_dir, "index.html")
-    return jsonify(ok=True, service="Hubuzz / Agente DOU", endpoints=["/buscar", "/health"])
+@app.errorhandler(404)
+def nf(e):
+    if request.path.startswith("/api/"):
+        return jsonify(ok=False, error="Rota nao encontrada."), 404
+    return e
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "10000"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
