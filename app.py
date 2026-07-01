@@ -2,18 +2,17 @@ from __future__ import annotations
 
 """Hubuzz - Backend Flask. Painel + busca REAL no DOU (/leiturajornal, JSON).
 
-Contrato 100% compativel com o index.html atual:
+Contrato compativel com index.html e agente.html:
   POST /api/dou/buscar
     body: {keywords:[...], secao:"do3", date_from:"YYYY-MM-DD", date_to:"YYYY-MM-DD"}
-    ->  {ok, consulta:{keywords, secao, date_from, date_to, dias_uteis,
-                       dias_pulados, materias_varridas, fonte},
-         resultados:[{termo, encontrou, total, materias:[{titulo, data_pub,
-                       orgao, pagina, edicao, tipo_ato, trecho, link}]}],
-         oportunidades:[...formato do painel OPS...],
-         nota}
+    -> {ok, consulta{...}, resultados[{termo,encontrou,total,materias[...]}],
+        oportunidades[...], nota}
 
-Robustez contra 502/anti-bot do in.gov.br:
-  - Retry/backoff exponencial + rotacao de User-Agent + warm-up na home.
+Cada materia expoe:
+  link          -> link ESTAVEL de leitura no jornal (/leiturajornal#...), NAO da 502
+  link_oficial  -> URL canonica /web/dou/-/{urlTitle} (pode cair em 502 no DOU)
+
+Robustez contra 502/anti-bot do in.gov.br: retry/backoff + rotacao de UA + warm-up.
 """
 
 import os
@@ -48,7 +47,6 @@ MAX_MATERIAS_POR_TERMO = 40
 PARAMS_RE = re.compile(r'id=["\']params["\'][^>]*>(.*?)</script>', re.S | re.I)
 TAG_RE = re.compile(r"<[^>]+>")
 
-# Rotulos legiveis das secoes para o painel
 SECAO_LABEL = {"do1": "DOU Secao 1", "do2": "DOU Secao 2", "do3": "DOU Secao 3"}
 
 UAS = [
@@ -147,10 +145,26 @@ def _match(item: dict[str, Any], termo_norm: str) -> bool:
     return termo_norm in blob
 
 
-def _materia(item: dict[str, Any], url: str) -> dict[str, Any]:
+# --------------------------------------------------------------------------- #
+# LINKS  (Opcao A: principal estavel, oficial secundario)
+# --------------------------------------------------------------------------- #
+def _link_leitura(ddmm: str, secao: str, art_id: Any) -> str:
+    """Link ESTAVEL de leitura no jornal (nao cai em 502). Ancora na materia."""
+    base = f"{LEITURA_URL}?data={ddmm}&secao={secao}"
+    return f"{base}#{art_id}" if art_id else base
+
+
+def _link_oficial(item: dict[str, Any]) -> str:
+    """URL canonica da materia (pode retornar 502 no proprio DOU)."""
     ut = item.get("urlTitle") or item.get("url_title") or ""
-    link = f"{DOU_BASE}/web/dou/-/{ut}" if ut else (item.get("url") or url)
+    return f"{DOU_BASE}/web/dou/-/{ut}" if ut else ""
+
+
+def _materia(item: dict[str, Any], ddmm: str, secao: str) -> dict[str, Any]:
     content = _strip(_field(item, "content", "conteudo"))
+    art_id = _field(item, "id", "articleId", "pk")
+    oficial = _link_oficial(item)
+    leitura = _link_leitura(ddmm, secao, art_id)
     return {
         "titulo": _strip(_field(item, "title", "titulo")) or "(sem titulo)",
         "orgao": _strip(_field(item, "hierarchyStr", "hierarquia", "orgao")),
@@ -159,19 +173,19 @@ def _materia(item: dict[str, Any], url: str) -> dict[str, Any]:
         "edicao": _field(item, "editionNumber", "edicao"),
         "data_pub": _field(item, "pubDate", "dataPublicacao"),
         "trecho": content[:400],
-        "link": link,
+        "link": leitura,            # principal = ESTAVEL (Opcao A)
+        "link_oficial": oficial,    # secundario = pagina oficial (pode dar 502)
     }
 
 
 # --------------------------------------------------------------------------- #
-# Mapeamento para o formato do painel "Oportunidades" (OPS)
+# Mapeamento para o painel "Oportunidades" (OPS)
 # --------------------------------------------------------------------------- #
 def _score(materia: dict[str, Any], termo: str) -> int:
-    """Heuristica simples de aderencia (0-100) para priorizar no painel."""
     base = 60
     blob = _norm(materia["titulo"] + " " + materia["trecho"])
     if _norm(termo) in _norm(materia["titulo"]):
-        base += 18                                   # termo no titulo pesa mais
+        base += 18
     for forte in ("edital", "licitacao", "pregao", "chamada", "concorrencia",
                   "fomento", "selecao", "credenciamento"):
         if forte in blob:
@@ -181,7 +195,6 @@ def _score(materia: dict[str, Any], termo: str) -> int:
 
 
 def _urgencia(data_pub: str) -> int:
-    """Quanto mais recente a publicacao, maior a urgencia exibida."""
     try:
         d = dt.datetime.strptime(str(data_pub)[:10], "%d/%m/%Y").date()
     except ValueError:
@@ -192,10 +205,8 @@ def _urgencia(data_pub: str) -> int:
 
 def _tags(sc: int, tipo_ato: str) -> list[list[str]]:
     tags: list[list[str]] = []
-    if sc >= 80:
-        tags.append(["Alta aderencia", "b-green"])
-    else:
-        tags.append(["Aderencia media", "b-gray"])
+    tags.append(["Alta aderencia", "b-green"] if sc >= 80
+                else ["Aderencia media", "b-gray"])
     if tipo_ato:
         tags.append([tipo_ato[:24], "b-blue"])
     tags.append(["DOU", "b-gray"])
@@ -203,28 +214,20 @@ def _tags(sc: int, tipo_ato: str) -> list[list[str]]:
 
 
 def _oportunidade(materia: dict[str, Any], termo: str, secao: str) -> dict[str, Any]:
-    """Converte uma materia do DOU no objeto que o painel OPS consome."""
     sc = _score(materia, termo)
     origem = SECAO_LABEL.get(secao, "DOU")
-    seed = (materia["titulo"] + materia["data_pub"]).encode("utf-8")
+    seed = (materia["titulo"] + str(materia["data_pub"])).encode("utf-8")
     oid = "DOU-" + hashlib.md5(seed).hexdigest()[:6].upper()
     return {
-        "id": oid,
-        "t": materia["titulo"],
-        "or": origem,                       # origem (fonte)
-        "ins": materia["orgao"] or origem,  # instituicao publicadora
-        "te": termo,                        # tema = palavra-chave que casou
-        "rg": "Brasil",                     # geografia
-        "vl": "A confirmar",                # valor
-        "pz": materia["data_pub"] or "-",   # prazo/publicacao
-        "rp": "Triagem automatica",         # responsavel sugerido
-        "sc": sc,                           # score de aderencia
-        "ur": _urgencia(materia["data_pub"]),
+        "id": oid, "t": materia["titulo"], "or": origem,
+        "ins": materia["orgao"] or origem, "te": termo, "rg": "Brasil",
+        "vl": "A confirmar", "pz": materia["data_pub"] or "-",
+        "rp": "Triagem automatica", "sc": sc, "ur": _urgencia(materia["data_pub"]),
         "rs": materia["trecho"] or materia["titulo"],
         "tags": _tags(sc, materia["tipo_ato"]),
-        "link": materia["link"],
-        "pagina": materia["pagina"],
-        "edicao": materia["edicao"],
+        "link": materia["link"], "link_oficial": materia["link_oficial"],
+        "fonteDOU": True, "url": materia["link"],
+        "pagina": materia["pagina"], "edicao": materia["edicao"],
     }
 
 
@@ -243,7 +246,6 @@ def health() -> Any:
 
 @app.post("/api/dou/buscar")
 def buscar_dou() -> Any:
-    """Varre cada dia util do intervalo e conta ocorrencias reais por termo."""
     try:
         body = request.get_json(silent=True) or {}
         keywords = [k.strip() for k in body.get("keywords", []) if str(k).strip()]
@@ -284,7 +286,8 @@ def buscar_dou() -> Any:
             if cur.weekday() >= 5:                     # sabado/domingo
                 cur += dt.timedelta(days=1)
                 continue
-            artigos, url = _fetch_one(cur.strftime("%d-%m-%Y"), secao)
+            ddmm = cur.strftime("%d-%m-%Y")
+            artigos, url = _fetch_one(ddmm, secao)
             fonte = url
             if not artigos:
                 dias_pulados.append(cur.isoformat())
@@ -294,10 +297,10 @@ def buscar_dou() -> Any:
                 for a in artigos:
                     for k in keywords:
                         if _match(a, knorm[k]):
-                            mat = _materia(a, url)
+                            mat = _materia(a, ddmm, secao)
                             agg[k].append(mat)
                             op = _oportunidade(mat, k, secao)
-                            if op["id"] not in vistos:   # dedup por id estavel
+                            if op["id"] not in vistos:
                                 vistos.add(op["id"])
                                 oportunidades.append(op)
             cur += dt.timedelta(days=1)
@@ -321,10 +324,10 @@ def buscar_dou() -> Any:
             },
             resultados=resultados,
             oportunidades=oportunidades,
-            nota=("Consulta real ao DOU (/leiturajornal, JSON). Varre cada dia util "
-                  "do intervalo na secao e conta ocorrencias reais (titulo, subtitulo, "
-                  "conteudo e orgao), com retry e rotacao de User-Agent contra 502. "
-                  "O campo 'oportunidades' ja vem no formato do painel."),
+            nota=("Consulta real ao DOU (/leiturajornal, JSON). O link principal de "
+                  "cada materia aponta para a leitura estavel no jornal (sem 502); "
+                  "'link_oficial' leva a pagina canonica /web/dou/-/... (que as vezes "
+                  "retorna 502 no proprio DOU). 'oportunidades' ja vem no formato do painel."),
         )
     except Exception as exc:
         logger.exception("Erro inesperado na busca DOU")
